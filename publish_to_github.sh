@@ -11,6 +11,7 @@
 #      Commits use your GitHub "noreply" email, so your real email address
 #      is never published.
 #   4. Creates the repository on GitHub and uploads the code.
+#   5. Turns on the project website (GitHub Pages, from the docs/ folder).
 # Running it again later uploads any new commits instead.
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -75,5 +76,19 @@ else
     --source . --remote origin --push
 fi
 
+# 5. Website: publish the docs/ folder with GitHub Pages (free for public repos)
+SITE_URL="https://${LOGIN}.github.io/${REPO_NAME}/"
+if [ -f docs/index.html ]; then
+  echo "> Turning on the website (GitHub Pages from the docs folder)..."
+  if ! gh api "repos/${LOGIN}/${REPO_NAME}/pages" >/dev/null 2>&1; then
+    gh api -X POST "repos/${LOGIN}/${REPO_NAME}/pages" \
+      -f "source[branch]=main" -f "source[path]=/docs" >/dev/null 2>&1 \
+      || echo "  Couldn't turn on Pages automatically. On GitHub: Settings > Pages > Branch: main, folder: /docs > Save."
+  fi
+  gh repo edit "${LOGIN}/${REPO_NAME}" --homepage "${SITE_URL}" >/dev/null 2>&1 || true
+fi
+
 echo ""
-echo "Done: https://github.com/${LOGIN}/${REPO_NAME}"
+echo "Done!"
+echo "  Code:    https://github.com/${LOGIN}/${REPO_NAME}"
+echo "  Website: ${SITE_URL}  (the first build can take a minute or two)"
