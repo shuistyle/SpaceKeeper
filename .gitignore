@@ -1,0 +1,13 @@
+# Build output (recreated by build.sh / swift build)
+.build/
+build/
+*.app
+
+# Xcode
+.swiftpm/
+xcuserdata/
+DerivedData/
+
+# macOS and file-system clutter
+.DS_Store
+.fuse_hidden*
