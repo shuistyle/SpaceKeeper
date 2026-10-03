@@ -575,70 +575,101 @@ private struct SpaceRow: View {
 // MARK: - Settings & footer
 
 // --- SETTINGS -------------------------------------------------------------
-// Each SettingRow shows a label on the left and a control on the right.
+// Collapsed by default: clicking the "Settings" heading shows or hides the
+// options (isExpanded). Each SettingRow shows a label on the left and a control on the right.
 // `$model.something` binds the control to an AppModel setting, so changing
 // the control saves the setting immediately (see "Settings" in AppModel).
 private struct SettingsSection: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    // Collapsed by default, so the panel opens showing just your desktops.
+    // Click "Settings" to show the options; click it again to hide them.
+    @State private var isExpanded = false
 
     var body: some View {
         @Bindable var model = model
         VStack(alignment: .leading, spacing: 8) {
-            SectionHeading(title: "Settings")
-
-            SettingRow("Keep Spaces in a fixed order") {
-                Toggle("Keep Spaces in a fixed order", isOn: $model.keepSpacesInOrder)
-            }
-            SettingRow("Show name when switching") {
-                Toggle("Show name when switching", isOn: $model.showHUD)
-            }
-            SettingRow("Show name in menu bar") {
-                Toggle("Show name in menu bar", isOn: $model.showNameInMenuBar)
-            }
-            SettingRow("Label each desktop") {
-                Toggle("Label each desktop", isOn: $model.showDesktopLabels)
-            }
-
-            if model.showDesktopLabels {
-                SettingRow("Corner") {
-                    Picker("Label corner", selection: $model.labelCorner) {
-                        ForEach(LabelCorner.allCases) { Text($0.title).tag($0) }
-                    }
-                    .fixedSize()
+            // The "Settings" heading is a button that shows/hides everything below it.
+            Button {
+                withAnimation(reduceMotion ? nil : .snappy) { isExpanded.toggle() }
+            } label: {
+                HStack(spacing: 6) {
+                    Text("Settings")
+                        .font(.headline)
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
                 }
-                SettingRow("Layer") {
-                    Picker("Label layer", selection: $model.labelLayer) {
-                        ForEach(LabelLayer.allCases) { Text($0.title).tag($0) }
-                    }
-                    .fixedSize()
-                }
-                SettingRow("Opacity") {
-                    Slider(value: $model.labelOpacity, in: 0.3...1, step: 0.05) {
-                        Text("Label opacity")
-                    }
-                    .frame(width: 150)
-                    .accessibilityValue("\(Int((model.labelOpacity * 100).rounded())) percent")
-                }
+                .frame(maxWidth: .infinity, minHeight: 24)
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+            .padding(.trailing, 4)
+            .help(isExpanded ? "Hide settings" : "Show settings")
+            .accessibilityLabel("Settings")
+            .accessibilityValue(isExpanded ? "expanded" : "collapsed")
+            .accessibilityHint(isExpanded ? "Hides the settings" : "Shows the settings")
+            .accessibilityAddTraits(.isHeader)
 
-            if model.showDesktopLabels || model.showHUD {
-                SettingRow("Label and banner size") {
-                    Picker("Label and banner text size", selection: $model.overlayTextSize) {
-                        ForEach(OverlayTextSize.allCases) { Text($0.title).tag($0) }
-                    }
-                    .fixedSize()
-                }
-            }
+            if isExpanded {
 
-            SettingRow("Open SpaceKeeper with ⌃⌥S") {
-                Toggle("Open SpaceKeeper with Control-Option-S", isOn: $model.openWithModifierTap)
-            }
-            .help("Press Control-Option-S (or tap Control-Option on its own) to open or close SpaceKeeper from any app.")
-            SettingRow("Notify when pinned order changes") {
-                Toggle("Notify when pinned order changes", isOn: $model.notifyPinMoves)
-            }
-            SettingRow("Launch at login") {
-                Toggle("Launch at login", isOn: $model.launchAtLogin)
+                SettingRow("Keep Spaces in a fixed order") {
+                    Toggle("Keep Spaces in a fixed order", isOn: $model.keepSpacesInOrder)
+                }
+                SettingRow("Show name when switching") {
+                    Toggle("Show name when switching", isOn: $model.showHUD)
+                }
+                SettingRow("Show name in menu bar") {
+                    Toggle("Show name in menu bar", isOn: $model.showNameInMenuBar)
+                }
+                SettingRow("Label each desktop") {
+                    Toggle("Label each desktop", isOn: $model.showDesktopLabels)
+                }
+
+                if model.showDesktopLabels {
+                    SettingRow("Corner") {
+                        Picker("Label corner", selection: $model.labelCorner) {
+                            ForEach(LabelCorner.allCases) { Text($0.title).tag($0) }
+                        }
+                        .fixedSize()
+                    }
+                    SettingRow("Layer") {
+                        Picker("Label layer", selection: $model.labelLayer) {
+                            ForEach(LabelLayer.allCases) { Text($0.title).tag($0) }
+                        }
+                        .fixedSize()
+                    }
+                    SettingRow("Opacity") {
+                        Slider(value: $model.labelOpacity, in: 0.3...1, step: 0.05) {
+                            Text("Label opacity")
+                        }
+                        .frame(width: 150)
+                        .accessibilityValue("\(Int((model.labelOpacity * 100).rounded())) percent")
+                    }
+                }
+
+                if model.showDesktopLabels || model.showHUD {
+                    SettingRow("Label and banner size") {
+                        Picker("Label and banner text size", selection: $model.overlayTextSize) {
+                            ForEach(OverlayTextSize.allCases) { Text($0.title).tag($0) }
+                        }
+                        .fixedSize()
+                    }
+                }
+
+                SettingRow("Open SpaceKeeper with ⌃⌥S") {
+                    Toggle("Open SpaceKeeper with Control-Option-S", isOn: $model.openWithModifierTap)
+                }
+                .help("Press Control-Option-S (or tap Control-Option on its own) to open or close SpaceKeeper from any app.")
+                SettingRow("Notify when pinned order changes") {
+                    Toggle("Notify when pinned order changes", isOn: $model.notifyPinMoves)
+                }
+                SettingRow("Launch at login") {
+                    Toggle("Launch at login", isOn: $model.launchAtLogin)
+                }
             }
         }
         .toggleStyle(.switch)
