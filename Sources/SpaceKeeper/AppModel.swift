@@ -620,6 +620,28 @@ final class AppModel {
     /// What happened on the last jump, for Diagnostics.
     private(set) var lastSwitchReport = "No switch tried yet"
 
+    /// Apps known to turn macOS's desktop shortcuts off while they're in
+    /// front (virtual machines and remote-desktop apps), by bundle ID prefix.
+    /// Add to this list if another app turns out to do the same.
+    private static let shortcutBlockingApps = [
+        "com.parallels.",            // Parallels Desktop and its VM windows
+        "com.vmware.fusion",         // VMware Fusion
+        "com.utmapp.",               // UTM
+        "org.virtualbox.",           // VirtualBox
+        "com.microsoft.rdc",         // Windows App / Microsoft Remote Desktop
+        "com.citrix.",               // Citrix Workspace
+        "com.vmware.horizon", "com.omnissa.horizon", // Horizon Client
+        "com.apple.ScreenSharing",   // Screen Sharing
+        "com.teamviewer.", "com.realvnc.",
+    ]
+
+    private static func blocksDesktopShortcuts(_ app: NSRunningApplication?) -> Bool {
+        guard let app, app.processIdentifier != ProcessInfo.processInfo.processIdentifier,
+              let bundleID = app.bundleIdentifier
+        else { return false }
+        return shortcutBlockingApps.contains { bundleID.hasPrefix($0) }
+    }
+
     func switchTo(_ space: SpaceInfo) {
         guard let number = space.desktopNumber else { return }
         if !SpaceSwitcher.isTrusted { SpaceSwitcher.requestTrust() }
@@ -631,12 +653,13 @@ final class AppModel {
             // The app you were using. Some apps — Parallels Desktop, other virtual
             // machines and remote-desktop apps — switch macOS's desktop shortcuts
             // OFF while they're in front, so they can pass the keys to the other
-            // computer. If the first press doesn't work, SpaceKeeper briefly makes
-            // itself the active app (which makes that app turn the shortcuts back
-            // on) and presses again.
+            // computer. ONLY for those apps, if the first press doesn't work,
+            // SpaceKeeper briefly makes itself the active app (which makes that
+            // app turn the shortcuts back on) and presses again. For any other
+            // app it never takes the keyboard away.
             let frontApp = NSWorkspace.shared.frontmostApplication
             let frontName = frontApp?.localizedName ?? "unknown app"
-            let weAreFront = frontApp?.processIdentifier == ProcessInfo.processInfo.processIdentifier
+            let mayRetry = Self.blocksDesktopShortcuts(frontApp)
 
             switch SpaceSwitcher.switchTo(desktop: number) {
             case .failure(let error):
@@ -648,7 +671,7 @@ final class AppModel {
                 self.refresh()
                 var moved = self.snapshot.activeSpaceID != startingSpace
                 var retried = false
-                if !moved && !weAreFront {
+                if !moved && mayRetry {
                     retried = true
                     NSApp.activate()
                     try? await Task.sleep(for: .milliseconds(300))
@@ -657,7 +680,9 @@ final class AppModel {
                     self.refresh()
                     moved = self.snapshot.activeSpaceID != startingSpace
                 }
-                let outcome = moved ? "switched" : "macOS did not switch"
+                let outcome = moved ? "switched"
+                    : mayRetry ? "macOS did not switch"
+                    : "macOS did not switch (no retry: \(frontName) isn't an app known to block the shortcuts)"
                 self.lastSwitchReport = "Desktop \(number): pressed \(shortcut.symbol) while \(frontName) was in front"
                     + (retried ? ", then again with SpaceKeeper in front" : "") + " → \(outcome)"
                 self.statusMessage = moved ? nil
