@@ -142,7 +142,9 @@ nonisolated struct SpaceConfig: Codable, Hashable, Sendable {
     /// are trimmed, and it's cut to `maxNameLength` characters.
     static func cleanedName(_ raw: String) -> String {
         let flattened = String(raw.unicodeScalars.map { scalar -> Character in
-            CharacterSet.controlCharacters.contains(scalar) || CharacterSet.newlines.contains(scalar)
+            // .control = true control codes only (not the invisible joiners
+            // that emoji like 👩‍💻 need).
+            scalar.properties.generalCategory == .control || CharacterSet.newlines.contains(scalar)
                 ? " " : Character(scalar)
         })
         let collapsed = flattened.split(whereSeparator: \.isWhitespace).joined(separator: " ")
