@@ -6,7 +6,7 @@
 //
 // It's shown in the floating panel centred at the top of the screen
 // (QuickPanelController in OpenShortcut.swift), which opens when you click
-// the menu bar icon (StatusItemController.swift) or press fn-S (or ⌃⌥S).
+// the menu bar icon (StatusItemController.swift) or double-tap Control (or press ⌃⌥S).
 //
 // Every view here gets the shared AppModel with
 //     @Environment(AppModel.self) private var model
@@ -952,10 +952,10 @@ private struct SettingsSection: View {
                             }
                         }
 
-                        SettingRow("Open with fn-S (or ⌃⌥S)") {
-                            Toggle("Open SpaceKeeper with fn S, or Control Option S", isOn: $model.openWithModifierTap)
+                        SettingRow("Open with double-tap ⌃ (or ⌃⌥S)") {
+                            Toggle("Open SpaceKeeper by double-tapping Control, or with Control Option S", isOn: $model.openWithModifierTap)
                         }
-                        .help("Press fn-S (or Control-Option-S on keyboards without fn) to open or close SpaceKeeper from any app.")
+                        .help("Tap Control twice quickly (or press Control-Option-S) to open or close SpaceKeeper from any app.")
                         SettingRow("Notify when pinned order changes") {
                             Toggle("Notify when pinned order changes", isOn: $model.notifyPinMoves)
                         }

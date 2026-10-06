@@ -54,7 +54,7 @@ final class StatusItemController: NSObject {
         if let space = model.currentSpace { spoken += ", current Space: \(model.displayName(for: space))" }
         if hasAlert { spoken += ", warning: pinned order changed" }
         button.setAccessibilityLabel(spoken)
-        button.toolTip = "SpaceKeeper — click to show your desktops (fn-S)"
+        button.toolTip = "SpaceKeeper — click to show your desktops (double-tap Control)"
     }
 
     /// Re-runs update() whenever any AppModel value it reads changes.

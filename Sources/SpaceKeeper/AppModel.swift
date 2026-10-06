@@ -17,8 +17,8 @@
 //   SpaceReader      – read Spaces            HUDController / DesktopLabelManager
 //   SpaceSwitcher    – switch desktops          (Overlays.swift) – on-screen text
 //   DockPreferences  – fixed-order setting    MissionControl  – add/remove desktops
-//   Persistence      – save/load (Models)     FnShortcut / GlobalHotKey /
-//   A11y             – VoiceOver, display       QuickPanelController – fn-S panel
+//   Persistence      – save/load (Models)     DoubleTapControl / GlobalHotKey /
+//   A11y             – VoiceOver, display       QuickPanelController – the panel
 //                      preferences
 //
 // Tip: "private" means only code inside this class can use it; everything
@@ -59,7 +59,7 @@ final class AppModel {
     @ObservationIgnored private let hud = HUDController()
     @ObservationIgnored private let labels = DesktopLabelManager()
     @ObservationIgnored private let openHotKey = GlobalHotKey()
-    @ObservationIgnored private let fnShortcut = FnShortcut()
+    @ObservationIgnored private let doubleTap = DoubleTapControl()
     @ObservationIgnored private var quickPanel: QuickPanelController?
     @ObservationIgnored private var observers: [any NSObjectProtocol] = []
     @ObservationIgnored private var pollTask: Task<Void, Never>?
@@ -73,7 +73,7 @@ final class AppModel {
 
     // Called once at launch (AppDelegate). Sets everything in motion:
     //   • reads the Spaces for the first time
-    //   • sets up the fn-S / ⌃⌥S shortcuts and quick panel (OpenShortcut.swift)
+    //   • sets up the double-tap Control / ⌃⌥S shortcuts and quick panel (OpenShortcut.swift)
     //   • listens for macOS notifications: Space switched, screens changed,
     //     accessibility display settings changed
     //   • starts a loop that calls refresh() every 1.5 seconds, because
@@ -86,7 +86,7 @@ final class AppModel {
         let quickPanel = QuickPanelController(model: self)
         self.quickPanel = quickPanel
         openHotKey.onPress = { quickPanel.toggle() }
-        fnShortcut.onPress = { quickPanel.toggle() }
+        doubleTap.onPress = { quickPanel.toggle() }
         updateOpenShortcut()
 
         let workspace = NSWorkspace.shared.notificationCenter
@@ -696,7 +696,7 @@ final class AppModel {
         Shortcuts:
         \(shortcuts)
         Last switch: \(lastSwitchReport)
-        Open shortcut fn-S: \(fnShortcut.status); pressed \(fnShortcut.pressCount)×
+        Open shortcut double-tap ⌃: \(doubleTap.status); used \(doubleTap.pressCount)×
         Open shortcut ⌃⌥S: \(openHotKey.status); pressed \(openHotKey.pressCount)×
         Quick panel: \(quickPanel?.lastResult ?? "not set up")
         Add desktop: \(MissionControl.lastAddReport)
@@ -740,7 +740,7 @@ final class AppModel {
         set { updateSettings { $0.labelLayer = newValue } }
     }
 
-    /// Open the panel with fn-S (or ⌃⌥S). (The setting keeps its old name so saved settings still load.)
+    /// Open the panel by double-tapping Control (or ⌃⌥S). (The setting keeps its old name so saved settings still load.)
     var openWithModifierTap: Bool {
         get { settings.openWithModifierTap }
         set {
@@ -752,10 +752,10 @@ final class AppModel {
 
     private func updateOpenShortcut() {
         if settings.openWithModifierTap {
-            fnShortcut.start()       // fn-S (main, one-handed)
+            doubleTap.start()        // double-tap Control (main, one-handed)
             openHotKey.register()    // ⌃⌥S (for keyboards without fn)
         } else {
-            fnShortcut.stop()
+            doubleTap.stop()
             openHotKey.unregister()
         }
     }

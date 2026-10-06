@@ -2,7 +2,7 @@
 // OpenShortcut.swift — opening SpaceKeeper from the keyboard
 // ======================================================================
 // QuickPanelController — the floating panel that the keyboard shortcuts
-// (fn-S in FnShortcut.swift, ⌃⌥S in GlobalHotKey.swift) and the menu bar
+// (double-tap Control in DoubleTapControl.swift, ⌃⌥S in GlobalHotKey.swift) and the menu bar
 // icon open.
 //
 // (Earlier versions also opened it with a tap of Control-Option on its own.

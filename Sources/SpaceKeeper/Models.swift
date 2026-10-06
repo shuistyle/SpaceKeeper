@@ -281,7 +281,7 @@ nonisolated struct AppSettings: Codable, Hashable, Sendable {
     var labelLayer: LabelLayer = .desktop
     var labelOpacity: Double = 0.85
     var notifyPinMoves = false
-    var openWithModifierTap = true   // fn-S / ⌃⌥S on (old name kept so saved settings still load)
+    var openWithModifierTap = true   // double-tap ⌃ / ⌃⌥S on (old name kept so saved settings still load)
     var overlayTextSize: OverlayTextSize = .standard
     var panelTextSize: PanelTextSize = .standard
 

@@ -6,7 +6,7 @@ A menu bar utility for macOS 26+ (tested target: macOS 27) that lets you **name 
 
 | Feature | How it works |
 |---|---|
-| **See all desktops at once** | Click the menu bar icon (or press fn-S): your desktops appear as tiles centred at the top of the screen, like Mission Control's strip. Up to 16 desktops fit as 2 rows of 8 (4 columns at the larger text sizes), so there's no scrolling. Click a tile to jump; drag tiles to reorder. |
+| **See all desktops at once** | Click the menu bar icon (or double-tap Control): your desktops appear as tiles centred at the top of the screen, like Mission Control's strip. Up to 16 desktops fit as 2 rows of 8 (4 columns at the larger text sizes), so there's no scrolling. Click a tile to jump; drag tiles to reorder. |
 | **Name each desktop** | Double-click a tile (or right-click › Rename, or ⌘R) and type a name. Names are tied to the Space's internal UUID, so they survive reboots and reordering. |
 | **Current name in the menu bar** | The menu bar shows the name of the Space you're on. |
 | **Switch HUD** | A Liquid Glass banner shows the name each time you change Space. |
@@ -52,7 +52,7 @@ On that first signed build, the script clears the old permission. Click **Enable
 SpaceKeeper is built to work with macOS's accessibility features:
 
 - **VoiceOver:** every button says what it does and which desktop it acts on ("Pin Outlook", "Switch to Mail"). Each desktop row reads as one summary ("Outlook, Desktop 1, current, pinned"). Desktop switches, pin warnings and status messages are announced. The on-screen labels and switch banner are decorative and hidden from VoiceOver, because the same information is spoken.
-- **Keyboard only:** fn-S (one-handed; or ⌃⌥S on keyboards without fn) opens the panel with the current desktop focused. Arrow keys move between tiles, Return jumps, 1–9 and 0 jump straight to Desktops 1–10, ⌘R renames, ⌥⌘ + arrows reorder, ⌘⌫ removes, ⌘N adds and Esc closes. With VoiceOver, Rename, Pin, Move and Remove are in each tile's Actions menu (VO-Command-Space).
+- **Keyboard only:** Double-tap Control (one-handed; or ⌃⌥S) opens the panel with the current desktop focused. Arrow keys move between tiles, Return jumps, 1–9 and 0 jump straight to Desktops 1–10, ⌘R renames, ⌥⌘ + arrows reorder, ⌘⌫ removes, ⌘N adds and Esc closes. With VoiceOver, Rename, Pin, Move and Remove are in each tile's Actions menu (VO-Command-Space).
 - **Vision:** the panel has its own **Text size** setting (Standard, Large, Extra large, Largest = 200 %). Change it with the **A / A** buttons at the bottom of the panel, or with ⌘+ / ⌘− / ⌘0. Text, icons and click targets all grow, and the smallest text is 12 pt even at Standard. Helper text uses a darker grey for about 7:1 contrast. The label and banner text size can be Standard, Large or Extra large. With **Reduce Transparency** or **Increase Contrast** turned on, labels and banners get a solid, bordered background, and labels can't drop below 95% opacity. Warnings use shapes as well as colour (warning triangle, crossed-out pin), and the current desktop has a ring as well as a fill.
 - **Motion:** with **Reduce Motion** turned on, reordering doesn't animate and the banner doesn't fade.
 - **Targets:** icon buttons have at least 24 × 24 point click areas.
