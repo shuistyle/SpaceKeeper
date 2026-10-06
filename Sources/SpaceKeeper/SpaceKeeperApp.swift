@@ -23,7 +23,7 @@
 //   MissionControl.swift   adds/removes desktops by driving Mission Control
 //   Overlays.swift         the switch banner (HUD) and the desktop labels
 //   StatusItemController.swift  the menu bar icon (click → panel)
-//   OpenShortcut.swift     ⌃⌥ tap detection + the floating panel (desktop grid)
+//   OpenShortcut.swift     the floating panel (desktop grid) the shortcuts open
 //   GlobalHotKey.swift     the ⌃⌥S keyboard shortcut
 //   Models.swift           the plain data types everything above shares,
 //                          and saving/loading them
