@@ -132,6 +132,22 @@ nonisolated struct SpaceConfig: Codable, Hashable, Sendable {
     var isEmpty: Bool {
         name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && pin == nil
     }
+
+    /// Longest name allowed. Long enough for real names, short enough to fit
+    /// the menu bar, tiles and notifications, and to keep saved settings small.
+    static let maxNameLength = 60
+
+    /// Tidies a typed or pasted name: line breaks, tabs and other invisible
+    /// control characters become spaces, runs of spaces become one, the ends
+    /// are trimmed, and it's cut to `maxNameLength` characters.
+    static func cleanedName(_ raw: String) -> String {
+        let flattened = String(raw.unicodeScalars.map { scalar -> Character in
+            CharacterSet.controlCharacters.contains(scalar) || CharacterSet.newlines.contains(scalar)
+                ? " " : Character(scalar)
+        })
+        let collapsed = flattened.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        return String(collapsed.prefix(maxNameLength))
+    }
 }
 
 // A warning about one pinned desktop. `title` and `message` are the words
@@ -319,8 +335,10 @@ enum Persistence {
 
     static func loadConfigs() -> [String: SpaceConfig] {
         guard let data = UserDefaults.standard.data(forKey: configsKey),
-              let value = try? JSONDecoder().decode([String: SpaceConfig].self, from: data)
+              var value = try? JSONDecoder().decode([String: SpaceConfig].self, from: data)
         else { return [:] }
+        // Tidy names saved before the length limit existed (or edited by hand).
+        for key in value.keys { value[key]?.name = SpaceConfig.cleanedName(value[key]?.name ?? "") }
         return value
     }
 

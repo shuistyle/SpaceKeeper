@@ -701,6 +701,13 @@ private struct DesktopTile: View {
                         draftName = model.customName(for: space.key)
                         nameFieldFocused = true
                     }
+                    // Stop typing (or pasting) at the 60-character limit.
+                    .onChange(of: draftName) { _, newValue in
+                        if newValue.count > SpaceConfig.maxNameLength {
+                            draftName = String(newValue.prefix(SpaceConfig.maxNameLength))
+                        }
+                    }
+                    .accessibilityHint("Up to \(SpaceConfig.maxNameLength) characters")
                     .onChange(of: nameFieldFocused) { _, focused in
                         // Clicking elsewhere saves the name.
                         if !focused, isRenaming { model.finishRenaming(space, newName: draftName) }

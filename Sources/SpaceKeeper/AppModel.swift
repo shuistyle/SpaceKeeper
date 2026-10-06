@@ -180,6 +180,7 @@ final class AppModel {
     }
 
     func rename(_ space: SpaceInfo, to name: String) {
+        let name = SpaceConfig.cleanedName(name) // max 60 characters, no line breaks
         updateConfig(space.key) { $0.name = name }
         evaluatePins()
         syncLabels()
