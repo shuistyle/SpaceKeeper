@@ -337,11 +337,14 @@ enum Persistence {
 
     static func loadConfigs() -> [String: SpaceConfig] {
         guard let data = UserDefaults.standard.data(forKey: configsKey),
-              var value = try? JSONDecoder().decode([String: SpaceConfig].self, from: data)
+              let saved = try? JSONDecoder().decode([String: SpaceConfig].self, from: data)
         else { return [:] }
         // Tidy names saved before the length limit existed (or edited by hand).
-        for key in value.keys { value[key]?.name = SpaceConfig.cleanedName(value[key]?.name ?? "") }
-        return value
+        return saved.mapValues { config in
+            var tidy = config
+            tidy.name = SpaceConfig.cleanedName(config.name)
+            return tidy
+        }
     }
 
     static func save(_ configs: [String: SpaceConfig]) {
