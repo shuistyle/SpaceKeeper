@@ -238,7 +238,7 @@ enum MissionControl {
 
         let result: Result<Void, Failure>
         if bar.spaceLists.isEmpty {
-            lastAddReport = "Mission Control opened but its desktop strip wasn't recognised — map saved to \(saveTreeMap(dockElement))"
+            lastAddReport = "Mission Control opened but its desktop strip wasn't recognised — click “Save Mission Control Map” in Diagnostics to help diagnose it"
             result = .failure(.didNotOpen)
         } else {
             // Let the opening animation settle so the controls respond.
@@ -341,10 +341,55 @@ enum MissionControl {
         } || items.allSatisfy { string($0, kAXRoleAttribute) == kAXButtonRole }
     }
 
-    /// Writes an outline of the Dock's accessibility tree to a log file, so a
-    /// changed Mission Control layout can be diagnosed. Returns the file path.
+    /// Where the map is saved: SpaceKeeper's own log folder (not the system's
+    /// DiagnosticReports folder, which macOS gathers into diagnostic bundles).
+    static var mapFile: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Logs/SpaceKeeper", isDirectory: true)
+            .appendingPathComponent("SpaceKeeper-MissionControl-map.txt")
+    }
+
+    /// Only saved when YOU click "Save Mission Control Map" in Diagnostics:
+    /// opens Mission Control, writes the map, closes it again, and returns the
+    /// file's location.
+    static func saveMapOnRequest() async -> URL? {
+        guard AXIsProcessTrusted(),
+              let dock = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.dock").first
+        else { return nil }
+        let dockElement = AXUIElementCreateApplication(dock.processIdentifier)
+        AXUIElementSetMessagingTimeout(dockElement, 1.0)
+        let originalPointer = CGEvent(source: nil)?.location
+        NSWorkspace.shared.open(URL(fileURLWithPath: "/System/Applications/Mission Control.app"))
+        try? await Task.sleep(for: .seconds(1))
+        let top = CGDisplayBounds(CGMainDisplayID())
+        movePointer(to: CGPoint(x: top.midX, y: top.minY + 2)) // expands the desktop strip
+        try? await Task.sleep(for: .milliseconds(800))
+        let path = saveTreeMap(dockElement)
+        closeMissionControl()
+        if let originalPointer { movePointer(to: originalPointer) }
+        return path.map(URL.init(fileURLWithPath:))
+    }
+
+    // PRIVACY: the map is an outline of on-screen controls. Labels can include
+    // other apps' window titles (document names, email subjects, web pages),
+    // so only labels SpaceKeeper needs are written out: those of Mission
+    // Control's own controls ("Desktop 3", "add desktop", "Spaces Bar").
+    // Every other label is replaced by its length, e.g. ‹hidden, 23 chars›.
+    private static func safeLabel(_ text: String) -> String {
+        let lower = text.lowercased()
+        let allowed = ["desktop", "add desktop", "spaces bar", "spaces", "mission control", "exit to desktop"]
+        // Keep "Desktop 3", "exit to Desktop 3", "add desktop" etc.; hide anything else.
+        let words = lower.split(whereSeparator: \.isWhitespace)
+        let onlySafeWords = !words.isEmpty && words.allSatisfy { word in
+            Int(word) != nil || allowed.contains { $0.split(separator: " ").contains(word) }
+        }
+        return onlySafeWords ? text : "‹hidden, \(text.count) chars›"
+    }
+
+    /// Writes an outline of Mission Control's accessibility tree (labels made
+    /// private, see safeLabel) to SpaceKeeper's log folder. Returns the path.
     @discardableResult
-    static func saveTreeMap(_ dock: AXUIElement) -> String {
+    private static func saveTreeMap(_ dock: AXUIElement) -> String? {
         var lines: [String] = ["SpaceKeeper map of Mission Control — \(Date()) — macOS \(ProcessInfo.processInfo.operatingSystemVersionString)"]
 
         func describe(_ element: AXUIElement, depth: Int) {
@@ -355,8 +400,8 @@ enum MissionControl {
             var parts: [String] = [
                 string(element, kAXRoleAttribute) ?? "?",
                 string(element, kAXSubroleAttribute).map { "subrole=\($0)" },
-                string(element, kAXDescriptionAttribute).map { "desc=\"\($0)\"" },
-                string(element, kAXTitleAttribute).map { "title=\"\($0)\"" },
+                string(element, kAXDescriptionAttribute).map { "desc=\"\(safeLabel($0))\"" },
+                string(element, kAXTitleAttribute).map { "title=\"\(safeLabel($0))\"" },
                 id.map { "id=\($0)" },
                 "children=\(kids.count)",
                 childError == .success ? nil : "childrenError=\(childError.rawValue)",
@@ -387,12 +432,22 @@ enum MissionControl {
             describe(element, depth: 0)
         }
 
-        let folder = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Logs/DiagnosticReports", isDirectory: true)
-        let file = folder.appendingPathComponent("SpaceKeeper-MissionControl-map.txt")
-        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        try? lines.joined(separator: "\n").write(to: file, atomically: true, encoding: .utf8)
+        let file = mapFile
+        do {
+            // Folder readable only by you (permissions 700).
+            try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true,
+                                                    attributes: [.posixPermissions: 0o700])
+            try lines.joined(separator: "\n").write(to: file, atomically: true, encoding: .utf8)
+            try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
+        } catch {
+            return nil
+        }
         return file.path
+    }
+
+    /// Deletes the saved map (the "Delete Map" button in Diagnostics).
+    static func deleteMap() {
+        try? FileManager.default.removeItem(at: mapFile)
     }
 
     private static func pick(_ elements: [AXUIElement], _ displayIndex: Int, _ displayCount: Int) -> AXUIElement? {

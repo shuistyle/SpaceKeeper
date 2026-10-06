@@ -1057,10 +1057,30 @@ private struct DiagnosticsView: View {
                     .skFont(.mono)
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
-                Button("Copy Report") {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(model.diagnosticsReport, forType: .string)
-                    A11y.announce("Diagnostics report copied")
+                HStack {
+                    Button("Copy Report") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(model.diagnosticsReport, forType: .string)
+                        A11y.announce("Diagnostics report copied")
+                    }
+                    // Only needed if Add/Remove Desktop stops working after a macOS
+                    // update. Window titles are hidden in the map (MissionControl.safeLabel).
+                    Button("Save Mission Control Map") {
+                        Task {
+                            if let url = await MissionControl.saveMapOnRequest() {
+                                NSWorkspace.shared.activateFileViewerSelecting([url])
+                                A11y.announce("Mission Control map saved")
+                            } else {
+                                A11y.announce("Couldn't save the Mission Control map")
+                            }
+                        }
+                    }
+                    .help("Opens Mission Control for a moment and saves an outline of its controls, so a problem with Add or Remove Desktop can be diagnosed. Other apps' window titles are hidden.")
+                    Button("Delete Map") {
+                        MissionControl.deleteMap()
+                        A11y.announce("Mission Control map deleted")
+                    }
+                    .help("Deletes the saved Mission Control map, if there is one.")
                 }
                 .skControlSize()
             }
