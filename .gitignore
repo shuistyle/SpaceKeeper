@@ -11,3 +11,18 @@ DerivedData/
 # macOS and file-system clutter
 .DS_Store
 .fuse_hidden*
+
+# Never publish keys, certificates, crash reports or diagnostic maps
+*.p12
+*.pfx
+*.pem
+*.key
+*.cer
+*.crt
+*.mobileprovision
+*.provisionprofile
+*.ips
+*-map.txt
+crash.log
+.env
+.env.*

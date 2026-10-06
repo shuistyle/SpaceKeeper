@@ -10,8 +10,10 @@
 #   3. Turns this folder into a Git repository and makes the first commit.
 #      Commits use your GitHub "noreply" email, so your real email address
 #      is never published.
-#   4. Creates the repository on GitHub and uploads the code.
-#   5. Turns on the project website (GitHub Pages, from the docs/ folder).
+#   4. Checks nothing looks like a key or secret, lists the files that will
+#      become public and asks you to confirm.
+#   5. Creates the repository on GitHub and uploads the code.
+#   6. Turns on the project website (GitHub Pages, from the docs/ folder).
 # Running it again later uploads any new commits instead.
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -55,6 +57,22 @@ git config user.name "${FULL_NAME}"
 git config user.email "${USER_ID}+${LOGIN}@users.noreply.github.com"
 
 git add -A
+
+# Safety check before anything is published: refuse files that look like
+# keys, certificates or secrets (by name or by content), even if .gitignore
+# missed them.
+RISKY_NAMES='\.(p12|pfx|pem|key|cer|crt|mobileprovision|provisionprofile|ips)$|(^|/)\.env|crash\.log$|-map\.txt$|id_(rsa|ed25519)'
+RISKY_TEXT='BEGIN ([A-Z ]*)PRIVATE KEY|ghp_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{10,}'
+risky="$(git diff --cached --name-only | grep -E "$RISKY_NAMES" || true)"
+secrets="$(git diff --cached -G"$RISKY_TEXT" --name-only || true)"
+if [ -n "$risky$secrets" ]; then
+  echo "✗ Stopped: these files look like keys or secrets and must not be published:"
+  printf '%s\n' $risky $secrets | sort -u | sed 's/^/    /'
+  echo "  Remove them from the folder (or add them to .gitignore), then run this again."
+  git reset -q
+  exit 1
+fi
+
 if git diff --cached --quiet; then
   echo "> Nothing new to commit."
 else
@@ -66,7 +84,26 @@ else
   echo "> Committed: $(git log -1 --pretty=%s)"
 fi
 
-# 4. Create on GitHub (first time) or push (later)
+# 4. Show what will become PUBLIC and ask before uploading.
+if git remote get-url origin >/dev/null 2>&1 && git rev-parse --verify -q origin/main >/dev/null; then
+  RANGE="origin/main..HEAD"
+else
+  RANGE="HEAD"
+fi
+CHANGED="$(git log --name-status --pretty=format: "$RANGE" 2>/dev/null | sed '/^$/d' | sort -u)"
+if [ -n "$CHANGED" ]; then
+  echo ""
+  echo "These files will be published to a PUBLIC repository (A = added, M = changed, D = deleted):"
+  echo "$CHANGED" | sed 's/^/    /'
+  echo ""
+  read -r -p "Publish them? [y/N] " answer
+  case "$answer" in
+    [yY]|[yY][eE][sS]) ;;
+    *) echo "Not published. Your commit is kept locally; run this again when ready."; exit 0 ;;
+  esac
+fi
+
+# 5. Create on GitHub (first time) or push (later)
 if git remote get-url origin >/dev/null 2>&1; then
   echo "> Uploading to $(git remote get-url origin)..."
   git push -u origin main
@@ -76,7 +113,7 @@ else
     --source . --remote origin --push
 fi
 
-# 5. Website: publish the docs/ folder with GitHub Pages (free for public repos)
+# 6. Website: publish the docs/ folder with GitHub Pages (free for public repos)
 SITE_URL="https://${LOGIN}.github.io/${REPO_NAME}/"
 if [ -f docs/index.html ]; then
   echo "> Turning on the website (GitHub Pages from the docs folder)..."
