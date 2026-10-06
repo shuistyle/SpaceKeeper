@@ -482,12 +482,29 @@ enum MissionControl {
         return elements.first
     }
 
+    // SAFE CONVERSIONS: macOS hands Accessibility values back as a generic
+    // "CFTypeRef". Swift can't check Core Foundation types with `as?`, so these
+    // helpers check the real type ID first and return nil if it's anything
+    // unexpected — never crashing on surprising data from another app.
+
+    /// The value as an AXUIElement, or nil if it's something else.
+    private static func asElement(_ value: CFTypeRef?) -> AXUIElement? {
+        guard let value, CFGetTypeID(value) == AXUIElementGetTypeID() else { return nil }
+        return unsafeDowncast(value, to: AXUIElement.self)
+    }
+
+    /// The value as an AXValue of the expected kind (point, size…), or nil.
+    private static func asAXValue(_ value: CFTypeRef?, ofType type: AXValueType) -> AXValue? {
+        guard let value, CFGetTypeID(value) == AXValueGetTypeID() else { return nil }
+        let axValue = unsafeDowncast(value, to: AXValue.self)
+        return AXValueGetType(axValue) == type ? axValue : nil
+    }
+
     private static func parent(of element: AXUIElement) -> AXUIElement? {
         var value: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, kAXParentAttribute as CFString, &value) == .success,
-              let value, CFGetTypeID(value) == AXUIElementGetTypeID()
+        guard AXUIElementCopyAttributeValue(element, kAXParentAttribute as CFString, &value) == .success
         else { return nil }
-        return (value as! AXUIElement)
+        return asElement(value)
     }
 
     /// An element's position and size on screen (top-left origin, like mouse events).
@@ -496,13 +513,15 @@ enum MissionControl {
         var sizeRef: CFTypeRef?
         guard AXUIElementCopyAttributeValue(element, kAXPositionAttribute as CFString, &positionRef) == .success,
               AXUIElementCopyAttributeValue(element, kAXSizeAttribute as CFString, &sizeRef) == .success,
-              let positionRef, let sizeRef,
-              CFGetTypeID(positionRef) == AXValueGetTypeID(), CFGetTypeID(sizeRef) == AXValueGetTypeID()
+              let position = asAXValue(positionRef, ofType: .cgPoint),
+              let sizeValue = asAXValue(sizeRef, ofType: .cgSize)
         else { return nil }
         var origin = CGPoint.zero
         var size = CGSize.zero
-        AXValueGetValue(positionRef as! AXValue, .cgPoint, &origin)
-        AXValueGetValue(sizeRef as! AXValue, .cgSize, &size)
+        guard AXValueGetValue(position, .cgPoint, &origin),
+              AXValueGetValue(sizeValue, .cgSize, &size),
+              origin.x.isFinite, origin.y.isFinite, size.width.isFinite, size.height.isFinite
+        else { return nil }
         return CGRect(origin: origin, size: size)
     }
 
@@ -526,7 +545,12 @@ enum MissionControl {
                 var value: CFTypeRef?
                 let error = AXUIElementCopyAttributeValue(element, attribute as CFString, &value)
                 lastChildrenError = error
-                if error == .success, let list = value as? [AXUIElement], !list.isEmpty { return list }
+                // Check every item really is an element (a plain `as? [AXUIElement]`
+                // doesn't check the items inside a Core Foundation array).
+                if error == .success, let items = value as? [AnyObject] {
+                    let list = items.compactMap { asElement($0) }
+                    if !list.isEmpty { return list }
+                }
                 if error == .success || error == .noValue || error == .attributeUnsupported { break }
                 if attempt < 2 { usleep(50_000) } // busy — wait 0.05 s and retry
             }
