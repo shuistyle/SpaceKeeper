@@ -28,7 +28,7 @@ import ApplicationServices
 /// permission SpaceKeeper already has for switching.
 enum MissionControl {
     enum Failure: Error {
-        case notTrusted, dockNotFound, didNotOpen, controlNotFound
+        case notTrusted, dockNotFound, didNotOpen, controlNotFound, desktopsChanged
 
         var message: String {
             switch self {
@@ -36,6 +36,7 @@ enum MissionControl {
             case .dockNotFound: "Couldn't find the Dock."
             case .didNotOpen: "Mission Control didn't open in time. Try again."
             case .controlNotFound: "Couldn't find Mission Control's desktop controls. A macOS update may have changed them."
+            case .desktopsChanged: "Your desktops changed while SpaceKeeper was checking, so nothing was removed. Try again."
             }
         }
     }
@@ -114,19 +115,53 @@ enum MissionControl {
         return found
     }
 
-    /// Removes the Space at `position` (0-based, counting full-screen Spaces too)
-    /// on the given display. Its windows move to another desktop, as when you
-    /// close a desktop by hand.
-    static func removeDesktop(displayIndex: Int, displayCount: Int, position: Int) async -> Result<Void, Failure> {
+    /// Removes one desktop (identified by its Space key) from the given display.
+    /// Its windows move to another desktop, as when you close a desktop by hand.
+    ///
+    /// SAFETY: SpaceKeeper's picture of your desktops can be a second or two
+    /// old, and desktops can be moved in between. So, with Mission Control
+    /// open (when nothing can move), it re-reads the live layout, finds where
+    /// that desktop is NOW, and checks that the thumbnail there is labelled
+    /// with the matching number ("Desktop 3"). If anything doesn't match, it
+    /// removes nothing — closing the wrong desktop would be worse than not
+    /// closing one.
+    static func removeDesktop(spaceKey: String, displayID: String, displayIndex: Int, displayCount: Int) async -> Result<Void, Failure> {
         await withMissionControl { bar, _ in
+            // 1. Where is the desktop right now?
+            let live = SpaceReader.snapshot()
+            guard let display = live.displays.first(where: { $0.id == displayID }),
+                  let target = display.spaces.first(where: { $0.key == spaceKey }),
+                  target.kind == .desktop
+            else { return .failure(.desktopsChanged) }
+
+            // 2. Mission Control must show the same number of thumbnails as macOS reports.
             guard let list = pick(bar.spaceLists, displayIndex, displayCount) else { return .failure(.controlNotFound) }
             let buttons = children(of: list)
-            guard buttons.indices.contains(position) else { return .failure(.controlNotFound) }
-            let button = buttons[position]
+            guard buttons.count == display.spaces.count,
+                  buttons.indices.contains(target.position)
+            else { return .failure(.desktopsChanged) }
+
+            // 3. The thumbnail in that place must carry the desktop's number.
+            let button = buttons[target.position]
+            guard labelNumber(of: button) == target.index else { return .failure(.desktopsChanged) }
+
             guard actions(of: button).contains("AXRemoveDesktop") else { return .failure(.controlNotFound) }
             return AXUIElementPerformAction(button, "AXRemoveDesktop" as CFString) == .success
                 ? .success(()) : .failure(.controlNotFound)
         }
+    }
+
+    /// The number at the end of a thumbnail's label: "Desktop 3" → 3. Works in
+    /// any language, since only the number is compared. Nil if there's none.
+    private static func labelNumber(of button: AXUIElement) -> Int? {
+        for attribute in [kAXTitleAttribute, kAXDescriptionAttribute] {
+            if let label = string(button, attribute),
+               let last = label.split(whereSeparator: \.isWhitespace).last,
+               let number = Int(last) {
+                return number
+            }
+        }
+        return nil
     }
 
     // MARK: - Mission Control session

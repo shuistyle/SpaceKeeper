@@ -557,9 +557,10 @@ final class AppModel {
         let name = displayName(for: space)
         isChangingDesktops = true
         Task { [weak self] in
-            let result = await MissionControl.removeDesktop(displayIndex: displayIndex,
-                                                            displayCount: self?.snapshot.displays.count ?? 1,
-                                                            position: space.position)
+            let result = await MissionControl.removeDesktop(spaceKey: space.key,
+                                                            displayID: space.displayID,
+                                                            displayIndex: displayIndex,
+                                                            displayCount: self?.snapshot.displays.count ?? 1)
             try? await Task.sleep(for: .milliseconds(500))
             guard let self else { return }
             self.refresh(force: true)
