@@ -43,7 +43,7 @@ Or open `Package.swift` in Xcode to edit and debug. Note: notifications and "Lau
 
 ### Signing
 
-macOS links the Accessibility permission to the app's signature. The first time `build.sh` runs, it creates a self-signed certificate called **SpaceKeeper Local Signing** in your login keychain. It then signs every build with it, so the permission survives rebuilds. If you have an Apple Development certificate, it uses that instead.
+macOS links the Accessibility permission to the app's signature, so anyone who could sign with SpaceKeeper's certificate could make an app that inherits that permission. The first time `build.sh` runs, it creates a self-signed certificate called **SpaceKeeper Signing** in its own password-protected keychain (`~/Library/Keychains/spacekeeper-signing.keychain-db`). Each build asks for that password, unlocks the keychain just long enough to sign, then locks it again; it also locks itself after 5 minutes or when the Mac sleeps. Every build is signed with the same certificate, so the permission survives rebuilds. (Earlier versions kept the certificate, unprotected, in the login keychain; `build.sh` offers to delete that old one.)
 
 On that first signed build, the script clears the old permission. Click **Enable Switching…** once, turn SpaceKeeper on, then quit and reopen it.
 

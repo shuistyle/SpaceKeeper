@@ -3,50 +3,70 @@
 #   ./build.sh            → build/SpaceKeeper.app
 #   ./build.sh --install  → also copies it to ~/Applications and launches it
 #
-# Signing: macOS ties the Accessibility permission to the app's signature. An
-# ad-hoc signature changes on every build, so the permission would be lost each
-# time. This script signs with a stable identity, in this order:
-#   1. $SIGN_IDENTITY, if set
-#   2. an "Apple Development" certificate, if you have one
-#   3. "SpaceKeeper Local Signing", a self-signed certificate this script
-#      creates in your login keychain the first time it runs
+# SIGNING — why it matters
+# macOS ties SpaceKeeper's Accessibility permission (which lets it watch the
+# keyboard and press keys) to the certificate the app is signed with. Anyone
+# who can sign with that certificate can make an app that macOS treats as
+# SpaceKeeper — and that inherits the permission.
+#
+# So the signing certificate lives in its OWN keychain,
+#   ~/Library/Keychains/spacekeeper-signing.keychain-db
+# protected by a password you choose. It's unlocked only while this script
+# signs the app, then locked again straight away (and it locks itself after
+# 5 minutes or when the Mac sleeps). A program running in the background
+# can't use a locked keychain, so it can't sign as SpaceKeeper.
+#
+# You'll be asked for that keychain password each time you build. (It isn't
+# your Mac login password unless you choose to make it the same — better not.)
+#
+# Advanced: set SIGN_IDENTITY to sign with a certificate of your own instead.
 set -euo pipefail
 cd "$(dirname "$0")"
 
 APP_NAME="SpaceKeeper"
 BUNDLE_ID="com.flowerdew.SpaceKeeper"
 APP="build/${APP_NAME}.app"
-LOCAL_CERT="SpaceKeeper Local Signing"
-KEYCHAIN="$HOME/Library/Keychains/login.keychain-db"
+SIGN_CERT="SpaceKeeper Signing"
+SIGN_KEYCHAIN="$HOME/Library/Keychains/spacekeeper-signing.keychain-db"
+LOGIN_KEYCHAIN="$HOME/Library/Keychains/login.keychain-db"
+OLD_CERT="SpaceKeeper Local Signing"   # earlier versions kept this in the login keychain
 
-# $2 = "-v" to list only identities macOS fully trusts. A self-signed
-# certificate isn't "trusted", but codesign can still sign with it.
+# Finds the SHA-1 fingerprint of a code-signing identity by name (in one keychain).
 find_identity() {
-  security find-identity ${2:-} -p codesigning 2>/dev/null \
-    | grep -F "\"$1" | head -1 | sed -E 's/^ *[0-9]+\) ([0-9A-F]{40}) .*/\1/' || true
+  security find-identity -p codesigning "$2" 2>/dev/null \
+    | grep -F "\"$1\"" | head -1 | sed -E 's/^ *[0-9]+\) ([0-9A-F]{40}) .*/\1/' || true
 }
 
-# The private key exists as a file only for a moment, in a private temporary
-# folder. The EXIT "trap" deletes that folder however the script ends —
-# success, an error or Ctrl-C — so the key is never left lying around.
+# Everything that must happen however the script ends (success, error, Ctrl-C):
+#   • lock the signing keychain again
+#   • delete the temporary folder that briefly holds a new private key
 SIGNING_TMP=""
-cleanup_signing_tmp() { [[ -n "$SIGNING_TMP" ]] && rm -rf "$SIGNING_TMP"; SIGNING_TMP=""; }
-trap cleanup_signing_tmp EXIT
+cleanup() {
+  [[ -n "$SIGNING_TMP" ]] && rm -rf "$SIGNING_TMP"
+  SIGNING_TMP=""
+  [[ -f "$SIGN_KEYCHAIN" ]] && security lock-keychain "$SIGN_KEYCHAIN" 2>/dev/null
+  return 0
+}
+trap cleanup EXIT
 
-create_local_identity() {
-  echo "▸ Creating a self-signed code-signing certificate (“${LOCAL_CERT}”)…"
+create_signing_keychain() {
+  echo "▸ Setting up a protected keychain for SpaceKeeper's signing certificate."
+  echo "  Choose a password for it (you'll type it each time you build)."
+  security create-keychain "$SIGN_KEYCHAIN"          # asks for the new password twice
+  security set-keychain-settings -l -u -t 300 "$SIGN_KEYCHAIN"  # auto-lock: 5 min / sleep
+
+  echo "▸ Creating a self-signed code-signing certificate (“${SIGN_CERT}”)…"
   local tmp
   tmp="$(umask 077; mktemp -d)"   # only you can read the folder
   SIGNING_TMP="$tmp"
-  # A random one-time password for the temporary .p12 bundle (never stored).
-  local p12pass; p12pass="$(/usr/bin/openssl rand -hex 16)"
+  local p12pass; p12pass="$(/usr/bin/openssl rand -hex 16)"  # one-time, never stored
   cat > "$tmp/cert.cnf" <<CNF
 [req]
 distinguished_name = dn
 x509_extensions = ext
 prompt = no
 [dn]
-CN = $LOCAL_CERT
+CN = $SIGN_CERT
 [ext]
 basicConstraints = critical,CA:false
 keyUsage = critical,digitalSignature
@@ -59,32 +79,53 @@ CNF
   local legacy=""
   /usr/bin/openssl version | grep -q "^OpenSSL 3" && legacy="-legacy"
   /usr/bin/openssl pkcs12 -export $legacy -inkey "$tmp/key.pem" -in "$tmp/cert.pem" \
-    -name "$LOCAL_CERT" -out "$tmp/identity.p12" -passout "pass:${p12pass}"
+    -name "$SIGN_CERT" -out "$tmp/identity.p12" -passout "pass:${p12pass}"
 
-  security import "$tmp/identity.p12" -k "$KEYCHAIN" -P "$p12pass" -T /usr/bin/codesign >/dev/null
-  cleanup_signing_tmp
-  echo "  Created. If macOS asks whether codesign may use the key, click “Always Allow”."
+  security import "$tmp/identity.p12" -k "$SIGN_KEYCHAIN" -P "$p12pass" -T /usr/bin/codesign >/dev/null
+  rm -rf "$tmp"; SIGNING_TMP=""
+  echo "  Created. If macOS asks whether codesign may use the key, click “Allow”."
   NEW_IDENTITY=1
 }
 
+# Offers to delete the old, unprotected certificate from the login keychain.
+remove_old_certificate() {
+  [[ -n "$(find_identity "$OLD_CERT" "$LOGIN_KEYCHAIN")" ]] || return 0
+  echo ""
+  echo "▸ Your login keychain still has the old, unprotected “${OLD_CERT}” certificate."
+  echo "  SpaceKeeper no longer uses it; deleting it closes the security gap."
+  read -r -p "  Delete it now? [Y/n] " answer
+  case "${answer:-y}" in
+    [nN]*) echo "  Kept. Run this script again any time to delete it." ;;
+    *) security delete-identity -c "$OLD_CERT" "$LOGIN_KEYCHAIN" >/dev/null 2>&1 \
+         && echo "  Deleted." \
+         || echo "  Couldn't delete it — open Keychain Access › login › My Certificates and delete “${OLD_CERT}”." ;;
+  esac
+}
+
 NEW_IDENTITY=0
-if [[ -n "${SIGN_IDENTITY:-}" ]]; then
-  IDENTITY="$SIGN_IDENTITY"
-else
-  IDENTITY="$(find_identity "Apple Development" -v)"
-  if [[ -z "$IDENTITY" ]]; then
-    IDENTITY="$(find_identity "$LOCAL_CERT")"
-    if [[ -z "$IDENTITY" ]]; then
-      create_local_identity
-      IDENTITY="$(find_identity "$LOCAL_CERT")"
-    fi
+KEYCHAIN_ARGS=()
+
+# Picks the signing identity. Called just before signing, so the keychain is
+# unlocked only for the few seconds codesign needs — not during the build.
+prepare_signing() {
+  if [[ -n "${SIGN_IDENTITY:-}" ]]; then
+    IDENTITY="$SIGN_IDENTITY"
+    return
   fi
-fi
-if [[ -z "$IDENTITY" ]]; then
-  echo "✗ Couldn't find or create a signing certificate. Open Keychain Access and"
-  echo "  check for “${LOCAL_CERT}” in the login keychain, then run this again."
-  exit 1
-fi
+  if [[ ! -f "$SIGN_KEYCHAIN" ]]; then
+    create_signing_keychain
+  else
+    echo "▸ Unlocking SpaceKeeper's signing keychain (type its password)…"
+    security unlock-keychain "$SIGN_KEYCHAIN"
+  fi
+  IDENTITY="$(find_identity "$SIGN_CERT" "$SIGN_KEYCHAIN")"
+  if [[ -z "$IDENTITY" ]]; then
+    echo "✗ The signing keychain has no “${SIGN_CERT}” certificate."
+    echo "  Delete ~/Library/Keychains/spacekeeper-signing.keychain-db and run this again to recreate it."
+    exit 1
+  fi
+  KEYCHAIN_ARGS=(--keychain "$SIGN_KEYCHAIN")
+}
 
 echo "▸ Building (release)…"
 swift build -c release
@@ -96,9 +137,13 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN_DIR/$APP_NAME" "$APP/Contents/MacOS/$APP_NAME"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
 
+prepare_signing
 echo "▸ Signing with ${IDENTITY}…"
-codesign --force --options runtime --timestamp=none --sign "$IDENTITY" "$APP"
+codesign --force --options runtime --timestamp=none ${KEYCHAIN_ARGS[@]+"${KEYCHAIN_ARGS[@]}"} --sign "$IDENTITY" "$APP"
+# Signed — lock the keychain again now rather than at the end of the script.
+[[ -f "$SIGN_KEYCHAIN" ]] && security lock-keychain "$SIGN_KEYCHAIN" 2>/dev/null || true
 codesign --verify "$APP"
+[[ -z "${SIGN_IDENTITY:-}" ]] && remove_old_certificate
 
 if [[ "$NEW_IDENTITY" == 1 ]]; then
   # The old permission belonged to the ad-hoc build; clear it so it can be granted once more.
