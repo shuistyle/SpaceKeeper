@@ -60,6 +60,7 @@ final class AppModel {
     @ObservationIgnored private let labels = DesktopLabelManager()
     @ObservationIgnored private let openShortcut = ModifierTapMonitor()
     @ObservationIgnored private let openHotKey = GlobalHotKey()
+    @ObservationIgnored private let fnShortcut = FnShortcut()
     @ObservationIgnored private var quickPanel: QuickPanelController?
     @ObservationIgnored private var observers: [any NSObjectProtocol] = []
     @ObservationIgnored private var pollTask: Task<Void, Never>?
@@ -87,6 +88,7 @@ final class AppModel {
         self.quickPanel = quickPanel
         openShortcut.onTap = { quickPanel.toggle() }
         openHotKey.onPress = { quickPanel.toggle() }
+        fnShortcut.onPress = { quickPanel.toggle() }
         updateOpenShortcut()
 
         let workspace = NSWorkspace.shared.notificationCenter
@@ -362,6 +364,52 @@ final class AppModel {
         UNUserNotificationCenter.current().add(request, withCompletionHandler: nil)
     }
 
+    // --- OPENING THE PANEL AND JUMPING ---------------------------------------
+    // The panel is the floating window from QuickPanelController
+    // (OpenShortcut.swift), opened by the menu bar icon (StatusItemController)
+    // or the ⌃⌥S shortcut. `panelOpenCount` goes up each time it opens so the
+    // grid can put keyboard focus on the current desktop.
+    private(set) var panelOpenCount = 0
+
+    /// The desktop whose name is being edited in its tile (nil = none).
+    var renamingKey: String?
+
+    @ObservationIgnored private var pendingJump: Task<Void, Never>?
+
+    func toggleQuickPanel() { quickPanel?.toggle() }
+    func closeQuickPanel() { quickPanel?.close() }
+    func quickPanelDidOpen() { panelOpenCount += 1 }
+
+    /// Jumps to a desktop and closes the panel. When `waitForDoubleClick` is
+    /// true (a mouse click), it waits one double-click interval first, so a
+    /// second click can turn the action into "rename" instead.
+    func jump(to space: SpaceInfo, waitForDoubleClick: Bool = false) {
+        pendingJump?.cancel()
+        guard canSwitch(to: space), space.managedID != snapshot.activeSpaceID else { return }
+        pendingJump = Task { [weak self] in
+            if waitForDoubleClick {
+                try? await Task.sleep(for: .seconds(NSEvent.doubleClickInterval))
+            }
+            guard !Task.isCancelled, let self else { return }
+            self.closeQuickPanel()
+            self.switchTo(space)
+        }
+    }
+
+    func startRenaming(_ space: SpaceInfo) {
+        guard space.kind == .desktop else { return }
+        pendingJump?.cancel()
+        pendingJump = nil
+        renamingKey = space.key
+    }
+
+    /// Ends renaming. Pass nil to cancel (keep the old name).
+    func finishRenaming(_ space: SpaceInfo, newName: String?) {
+        if let newName { rename(space, to: newName) }
+        if renamingKey == space.key { renamingKey = nil }
+    }
+
+
     // --- LIST ORDER ----------------------------------------------------------
     // Your own order for the rows in the panel (drag ≡, Move Up/Down, ⌥⌘↑↓).
     // This ONLY changes SpaceKeeper's list — Mission Control is untouched.
@@ -445,9 +493,37 @@ final class AppModel {
         return display.spaces.filter { $0.kind == .desktop }.count > 1
     }
 
+    /// macOS allows at most 16 desktops on each display.
+    static let maxDesktopsPerDisplay = 16
+
+    /// The display a new desktop would be added to: the one you're on.
+    private var addTargetDisplay: DisplaySpaces? {
+        let displayID = snapshot.activeSpace?.displayID ?? snapshot.displays.first?.id
+        return snapshot.displays.first { $0.id == displayID }
+    }
+
+    /// How many desktops (not counting full-screen apps) that display has.
+    var desktopCountOnCurrentDisplay: Int {
+        addTargetDisplay?.spaces.filter { $0.kind == .desktop }.count ?? 0
+    }
+
+    /// True when that display already has the macOS maximum of 16 desktops.
+    /// The Add Desktop button greys out; removing a desktop re-enables it,
+    /// because the count is re-read from macOS on every refresh.
+    var isAtDesktopLimit: Bool {
+        desktopCountOnCurrentDisplay >= Self.maxDesktopsPerDisplay
+    }
+
+    var canAddDesktop: Bool { !isChangingDesktops && !isAtDesktopLimit }
+
     /// Adds a desktop to the display you're currently on.
     func addDesktop() {
         guard !isChangingDesktops else { return }
+        guard !isAtDesktopLimit else {
+            statusMessage = "You have \(Self.maxDesktopsPerDisplay) desktops, the most macOS allows. Remove one to add another."
+            return
+        }
+        MissionControl.noteAddStarted()
         let displayID = snapshot.activeSpace?.displayID ?? snapshot.displays.first?.id
         let displayIndex = snapshot.displays.firstIndex { $0.id == displayID } ?? 0
         let before = snapshot.allSpaces.count
@@ -600,9 +676,11 @@ final class AppModel {
         Shortcuts:
         \(shortcuts)
         Last switch: \(lastSwitchReport)
+        Open shortcut fn-S: \(fnShortcut.status); pressed \(fnShortcut.pressCount)×
         Open shortcut ⌃⌥S: \(openHotKey.status); pressed \(openHotKey.pressCount)×
         Open shortcut ⌃⌥ tap: \(openShortcut.status); last tap \(openShortcut.lastSeen)
         Quick panel: \(quickPanel?.lastResult ?? "not set up")
+        Add desktop: \(MissionControl.lastAddReport)
         """
     }
 
@@ -655,17 +733,25 @@ final class AppModel {
 
     private func updateOpenShortcut() {
         if settings.openWithModifierTap {
-            openShortcut.start()
-            openHotKey.register()
+            fnShortcut.start()       // fn-S (main, one-handed)
+            openHotKey.register()    // ⌃⌥S (for keyboards without fn)
+            openShortcut.start()     // ⌃⌥ tap
         } else {
-            openShortcut.stop()
+            fnShortcut.stop()
             openHotKey.unregister()
+            openShortcut.stop()
         }
     }
 
     var notifyPinMoves: Bool {
         get { settings.notifyPinMoves }
         set { updateSettings { $0.notifyPinMoves = newValue } }
+    }
+
+    /// Text and icon size of the panel (see PanelTextSize in Models.swift).
+    var panelTextSize: PanelTextSize {
+        get { settings.panelTextSize }
+        set { updateSettings { $0.panelTextSize = newValue } }
     }
 
     var overlayTextSize: OverlayTextSize {

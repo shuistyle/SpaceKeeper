@@ -3,14 +3,13 @@
 // ======================================================================
 // Two parts:
 //   1. ModifierTapMonitor — notices a quick tap of Control-Option on their
-//      own. (The main ⌃⌥S shortcut is in GlobalHotKey.swift.)
+//      own. (The main shortcuts are fn-S in FnShortcut.swift and ⌃⌥S in GlobalHotKey.swift.)
 //   2. QuickPanelController — the floating panel those shortcuts open.
 //
-// Why a separate floating panel? The normal menu bar panel (MenuBarExtra in
-// SpaceKeeperApp.swift) closes the instant SpaceKeeper isn't the active
-// app, and macOS won't let an app make itself active from a shortcut. So
-// the shortcuts open this panel instead, which shows the SAME content
-// (MenuPanelView) but can take typing without becoming the active app.
+// The panel is a floating window centred at the top of the screen (like
+// Mission Control's desktop strip), opened by clicking the menu bar icon
+// (StatusItemController) or the shortcuts. It shows MenuPanelView. It
+// can take typing without making SpaceKeeper the active app.
 //
 // Connected in AppModel.start(): both shortcuts call quickPanel.toggle().
 // ======================================================================
@@ -151,8 +150,6 @@ private final class KeyablePanel: NSPanel {
 final class QuickPanelController {
     private let model: AppModel
     private var panel: KeyablePanel?
-    private var anchorTop: CGFloat = 0
-    private var anchorRight: CGFloat = 0
     private var outsideClickMonitor: Any?
     private var escapeMonitor: Any?
 
@@ -173,16 +170,17 @@ final class QuickPanelController {
         let panel = self.panel ?? makePanel()
         self.panel = panel
 
-        // Anchor under the menu bar icon (or the top-right of the screen).
-        if let button = Self.statusButton(), let window = button.window {
-            let frame = window.convertToScreen(button.convert(button.bounds, to: nil))
-            anchorTop = frame.minY - 6
-            anchorRight = frame.maxX + 12
-        } else if let screen = NSScreen.main {
-            anchorTop = screen.visibleFrame.maxY - 6
-            anchorRight = screen.visibleFrame.maxX - 12
+        // Centre at the top of the screen that has the menu bar icon
+        // (or the main screen): the window spans the screen's width and the
+        // panel sits centred at its top; the transparent rest lets clicks through.
+        let screen = Self.statusButton()?.window?.screen ?? NSScreen.main ?? NSScreen.screens.first
+        if let visible = screen?.visibleFrame {
+            let height = min(visible.height - 12, 1100)
+            panel.setFrame(NSRect(x: visible.minX, y: visible.maxY - height - 6,
+                                  width: visible.width, height: height), display: true)
         }
-        reposition()
+        model.panelDidAppear()
+        model.quickPanelDidOpen()
 
         panel.makeKeyAndOrderFront(nil)
         lastResult = "shown"
@@ -193,6 +191,8 @@ final class QuickPanelController {
         }
         escapeMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard event.keyCode == 53, let self, self.panel?.isKeyWindow == true else { return event }
+            // While renaming, Esc cancels the rename instead of closing the panel.
+            if self.panel?.firstResponder is NSTextView { return event }
             MainActor.assumeIsolated { self.close() }
             return nil
         }
@@ -214,7 +214,8 @@ final class QuickPanelController {
     /// caused a layout feedback loop (and a crash), so the window stays one size
     /// and the content sits at the top of it; the transparent area below lets
     /// clicks pass through.
-    private static let panelWidth: CGFloat = 360
+    /// Starting width; show() resizes the window to the screen's width.
+    private static let panelWidth: CGFloat = 900
 
     private func panelHeight() -> CGFloat {
         let visible = (NSScreen.main ?? NSScreen.screens.first)?.visibleFrame.height ?? 900
@@ -244,26 +245,13 @@ final class QuickPanelController {
             .background(.regularMaterial, in: .rect(cornerRadius: 14))
             .clipShape(.rect(cornerRadius: 14))
             .shadow(color: .black.opacity(0.25), radius: 12, y: 4)
-            .frame(width: Self.panelWidth, height: height, alignment: .top)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         let host = NSHostingView(rootView: content)
         host.sizingOptions = [] // never let SwiftUI resize the window
         host.frame = NSRect(x: 0, y: 0, width: Self.panelWidth, height: height)
         host.autoresizingMask = [.width, .height]
         panel.contentView = host
         return panel
-    }
-
-    private func reposition() {
-        guard let panel else { return }
-        let size = panel.frame.size
-        var origin = NSPoint(x: anchorRight - size.width, y: anchorTop - size.height)
-        if let screen = NSScreen.screens.first(where: { $0.frame.contains(NSPoint(x: anchorRight - 1, y: anchorTop)) })
-            ?? NSScreen.main {
-            let visible = screen.visibleFrame
-            origin.x = max(visible.minX + 8, min(origin.x, visible.maxX - size.width - 8))
-            origin.y = max(visible.minY, origin.y)
-        }
-        panel.setFrameOrigin(origin)
     }
 
     private static func statusButton() -> NSStatusBarButton? {

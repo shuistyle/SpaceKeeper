@@ -4,9 +4,9 @@
 // Written in SwiftUI: you describe WHAT the screen should show, and
 // SwiftUI draws it and redraws it whenever the data changes.
 //
-// The same MenuPanelView is used in two places:
-//   • the menu bar panel  (SpaceKeeperApp.swift)
-//   • the ⌃⌥S quick panel  (QuickPanelController in OpenShortcut.swift)
+// It's shown in the floating panel centred at the top of the screen
+// (QuickPanelController in OpenShortcut.swift), which opens when you click
+// the menu bar icon (StatusItemController.swift) or press fn-S (or ⌃⌥S).
 //
 // Every view here gets the shared AppModel with
 //     @Environment(AppModel.self) private var model
@@ -14,7 +14,7 @@
 //
 // Layout, top to bottom (each is its own small view below):
 //   CurrentSpaceHeader → PinAlertsView → AutoRearrangeBanner →
-//   ShortcutsBanner → SpacesListView (one SpaceRow per Space) →
+//   ShortcutsBanner → DesktopGridView (one DesktopTile per Space) →
 //   SettingsSection → status message → DiagnosticsView → FooterView
 //
 // SwiftUI words you'll see:
@@ -38,10 +38,143 @@ import SwiftUI
 // • Honours Reduce Motion, Reduce Transparency, Increase Contrast and
 //   Differentiate Without Colour; icon buttons have at least 24 × 24 pt targets.
 
+// ======================================================================
+// TEXT & ICON SIZE (low-vision support)
+// ======================================================================
+// macOS's built-in text styles are small in menu bar panels (captions are
+// 10 pt) and macOS doesn't let menu bar apps follow a system text size. So
+// every font and icon in the panel goes through `skFont`, which:
+//   • uses larger base sizes than macOS's defaults (12 pt minimum), and
+//   • multiplies them by the user's Text size setting (`panelScale`,
+//     from PanelTextSize in Models.swift: 1.0 / 1.3 / 1.6 / 2.0).
+// Helper text uses `skSecondary`, a darker grey than macOS's .secondary
+// (which measures about 4:1 contrast — below the WCAG minimum of 4.5:1).
+
+/// The panel's size multiplier, passed down from MenuPanelView.
+/// (`nonisolated` because SwiftUI reads environment keys from any thread.)
+nonisolated private struct PanelScaleKey: EnvironmentKey {
+    static let defaultValue: CGFloat = 1
+}
+
+nonisolated extension EnvironmentValues {
+    var panelScale: CGFloat {
+        get { self[PanelScaleKey.self] }
+        set { self[PanelScaleKey.self] = newValue }
+    }
+}
+
+/// The panel's text styles, with base point sizes at "Standard".
+enum SKTextStyle {
+    case caption, callout, body, headline, title3, title, icon, mono
+
+    var baseSize: CGFloat {
+        switch self {
+        case .caption: 12
+        case .callout: 13
+        case .body: 14
+        case .headline: 15
+        case .title3: 18
+        case .title: 22
+        case .icon: 16
+        case .mono: 12
+        }
+    }
+
+    var defaultWeight: Font.Weight {
+        switch self {
+        case .headline: .semibold
+        case .title: .bold
+        default: .regular
+        }
+    }
+}
+
+private struct SKFontModifier: ViewModifier {
+    @Environment(\.panelScale) private var scale
+    let style: SKTextStyle
+    let weight: Font.Weight?
+    let monospacedDigit: Bool
+
+    func body(content: Content) -> some View {
+        let size = style.baseSize * scale
+        var font = Font.system(size: size, weight: weight ?? style.defaultWeight,
+                               design: style == .mono ? .monospaced : .default)
+        if monospacedDigit { font = font.monospacedDigit() }
+        return content.font(font)
+    }
+}
+
+/// Picks a control size (buttons, switches, pickers) to match the text size.
+private struct SKControlSizeModifier: ViewModifier {
+    @Environment(\.panelScale) private var scale
+
+    func body(content: Content) -> some View {
+        content.controlSize(scale >= 2 ? .extraLarge : scale > 1 ? .large : .regular)
+    }
+}
+
+extension View {
+    func skFont(_ style: SKTextStyle, weight: Font.Weight? = nil, monospacedDigit: Bool = false) -> some View {
+        modifier(SKFontModifier(style: style, weight: weight, monospacedDigit: monospacedDigit))
+    }
+
+    func skControlSize() -> some View {
+        modifier(SKControlSizeModifier())
+    }
+}
+
+extension Color {
+    /// Helper-text colour: darker than macOS's .secondary so it stays
+    /// readable (about 7:1 contrast on a light background).
+    static var skSecondary: Color { Color.primary.opacity(0.75) }
+}
+
+/// A scroll area that is exactly as tall as its content, up to `maxHeight`.
+/// (A plain ScrollView in a menu bar panel collapses to zero height.)
+private struct FittedScroll<Content: View>: View {
+    let maxHeight: CGFloat
+    @ViewBuilder let content: Content
+    @State private var contentHeight: CGFloat = 0
+
+    var body: some View {
+        ScrollView {
+            content
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { contentHeight = $0 }
+        }
+        .frame(height: min(max(contentHeight, 1), maxHeight))
+        .scrollIndicators(.automatic)
+    }
+}
+
+/// Usable screen height, for capping scroll areas so the panel fits on screen.
+private var screenHeight: CGFloat {
+    (NSScreen.main ?? NSScreen.screens.first)?.visibleFrame.height ?? 900
+}
+
+
 // The whole panel. Shows banners only when they're relevant (`if …`),
 // and announces new status messages to VoiceOver (`.onChange`).
 struct MenuPanelView: View {
     @Environment(AppModel.self) private var model
+
+    private var scale: CGFloat { model.panelTextSize.scale }
+
+    /// ⌘+ / ⌘− / ⌘0 change the panel's text size, like zooming in a browser.
+    private var textSizeShortcuts: some View {
+        ZStack {
+            Button("Larger text") { model.panelTextSize = model.panelTextSize.bigger }
+                .keyboardShortcut("+", modifiers: .command)
+            Button("Larger text") { model.panelTextSize = model.panelTextSize.bigger }
+                .keyboardShortcut("=", modifiers: .command)
+            Button("Smaller text") { model.panelTextSize = model.panelTextSize.smaller }
+                .keyboardShortcut("-", modifiers: .command)
+            Button("Standard text size") { model.panelTextSize = .standard }
+                .keyboardShortcut("0", modifiers: .command)
+        }
+        .opacity(0)
+        .frame(width: 0, height: 0)
+        .accessibilityHidden(true)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -59,15 +192,15 @@ struct MenuPanelView: View {
                 ShortcutsBanner()
             }
 
-            SpacesListView()
+            DesktopGridView()
 
             Divider()
             SettingsSection()
 
             if let message = model.statusMessage {
                 Text(message)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .skFont(.caption)
+                    .foregroundStyle(Color.skSecondary)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityLabel("Status: \(message)")
             }
@@ -77,9 +210,19 @@ struct MenuPanelView: View {
             Divider()
             FooterView()
         }
-        .padding(14)
-        .frame(width: 360)
+        .padding(GridMetrics.padding(scale))
+        // As wide as the desktop grid (2 rows of 8, or 4 columns at large sizes).
+        .frame(width: GridMetrics.panelWidth(scale, columns: GridMetrics.columns(scale)))
+        // Everything inside reads this to size its text and icons.
+        .environment(\.panelScale, scale)
+        // Base font for buttons, switches and text fields.
+        .font(.system(size: SKTextStyle.body.baseSize * scale))
+        .skControlSize()
+        .background { textSizeShortcuts }
         .onAppear { model.panelDidAppear() }
+        .onChange(of: model.panelTextSize) { _, size in
+            A11y.announce("Text size: \(size.title)")
+        }
         .onChange(of: model.statusMessage) { _, message in
             if let message { A11y.announce(message) }
         }
@@ -93,6 +236,7 @@ struct MenuPanelView: View {
 // VoiceOver and a 24 × 24 point click area, so it's easy to hit.
 /// Icon-only button with a spoken label and a comfortable (≥ 24 pt) target.
 private struct IconButton: View {
+    @Environment(\.panelScale) private var scale
     let systemImage: String
     let label: String
     var help: String?
@@ -102,8 +246,9 @@ private struct IconButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: systemImage)
+                .skFont(.icon, weight: .medium)
                 .foregroundStyle(tint ?? .primary)
-                .frame(minWidth: 24, minHeight: 24)
+                .frame(minWidth: 28 * scale, minHeight: 28 * scale)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.borderless)
@@ -118,7 +263,7 @@ private struct SectionHeading: View {
     let title: String
     var body: some View {
         Text(title)
-            .font(.headline)
+            .skFont(.headline)
             .accessibilityAddTraits(.isHeader)
     }
 }
@@ -155,15 +300,15 @@ private struct CurrentSpaceHeader: View {
         HStack(alignment: .top) {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Current Space")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .skFont(.caption)
+                    .foregroundStyle(Color.skSecondary)
                 Text(model.currentSpace.map { model.displayName(for: $0) } ?? "Unknown")
-                    .font(.title2.bold())
+                    .skFont(.title)
                     .lineLimit(1)
                 if let space = model.currentSpace {
                     Text("\(space.defaultName) · \(space.displayName)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .skFont(.caption)
+                        .foregroundStyle(Color.skSecondary)
                 }
             }
             .accessibilityElement(children: .combine)
@@ -173,7 +318,7 @@ private struct CurrentSpaceHeader: View {
             IconButton(systemImage: "rectangle.3.group", label: "Open Mission Control") {
                 SystemUI.openMissionControl()
             }
-            .font(.title3)
+            .skFont(.title3)
         }
     }
 }
@@ -196,7 +341,7 @@ private struct PinAlertsView: View {
                     } icon: {
                         Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
                     }
-                    .font(.callout.weight(.semibold))
+                    .skFont(.callout, weight: .semibold)
                     .accessibilityAddTraits(.isHeader)
                     Spacer()
                     if model.pinAlerts.contains(where: \.isMoved) {
@@ -204,22 +349,22 @@ private struct PinAlertsView: View {
                             .help("Keep the desktops where they are now and save this as the pinned order.")
                     }
                 }
-                .controlSize(.small)
+                .skControlSize()
 
                 ForEach(model.pinAlerts) { alert in
                     HStack(alignment: .top, spacing: 8) {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(alert.title)
-                                .font(.caption.weight(.semibold))
+                                .skFont(.caption, weight: .semibold)
                             Text(alert.message)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                                .skFont(.caption)
+                                .foregroundStyle(Color.skSecondary)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                         .accessibilityElement(children: .combine)
                         Spacer(minLength: 4)
                         Button("Unpin") { model.unpin(key: alert.key) }
-                            .controlSize(.small)
+                            .skControlSize()
                             .accessibilityLabel("Unpin \(alert.name)")
                     }
                 }
@@ -227,7 +372,7 @@ private struct PinAlertsView: View {
                 if model.pinAlerts.contains(where: \.isMoved) {
                     Button("Open Mission Control to drag it back") { SystemUI.openMissionControl() }
                         .buttonStyle(.link)
-                        .font(.caption)
+                        .skFont(.caption)
                 }
             }
         }
@@ -243,19 +388,19 @@ private struct AutoRearrangeBanner: View {
         NoticeBox {
             HStack(alignment: .top, spacing: 8) {
                 Image(systemName: "shuffle")
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color.skSecondary)
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 4) {
                     Text("macOS is rearranging Spaces by recent use.")
-                        .font(.caption.weight(.semibold))
+                        .skFont(.caption, weight: .semibold)
                     Text("Lock the order so every Space stays where you put it.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .skFont(.caption)
+                        .foregroundStyle(Color.skSecondary)
                 }
                 .accessibilityElement(children: .combine)
                 Spacer(minLength: 4)
                 Button("Lock Order") { model.setAutoRearrange(false) }
-                    .controlSize(.small)
+                    .skControlSize()
             }
         }
     }
@@ -270,20 +415,20 @@ private struct ShortcutsBanner: View {
         NoticeBox {
             HStack(alignment: .top, spacing: 8) {
                 Image(systemName: "keyboard")
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color.skSecondary)
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Desktop shortcuts are off")
-                        .font(.caption.weight(.semibold))
+                        .skFont(.caption, weight: .semibold)
                     Text("Jumping needs macOS’s “Switch to Desktop” shortcuts: ⌃1…⌃0 for Desktops 1–10, ⌃⌥1…⌃⌥6 for 11–16.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .skFont(.caption)
+                        .foregroundStyle(Color.skSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 .accessibilityElement(children: .combine)
                 Spacer(minLength: 4)
                 Button("Turn On Shortcuts") { model.turnOnDesktopShortcuts() }
-                    .controlSize(.small)
+                    .skControlSize()
             }
         }
     }
@@ -291,288 +436,419 @@ private struct ShortcutsBanner: View {
 
 // MARK: - Spaces list
 
-// --- THE SPACES LIST ------------------------------------------------------
-// Header row ("Spaces", tip, + button) and a scrolling list with one
-// SpaceRow per Space, grouped by display, in your custom order
-// (AppModel.orderedSpaces). The scroll area measures its content so it's
-// only as tall as needed (up to 360 points).
-private struct SpacesListView: View {
-    @Environment(AppModel.self) private var model
-    @State private var contentHeight: CGFloat = 0
+// --- THE DESKTOP GRID ------------------------------------------------------
+// Desktops appear as tiles, like Mission Control's strip: 2 rows of 8 for
+// up to 16 desktops (macOS's maximum per display). At the larger text
+// sizes, 8 tiles would be wider than the screen, so the grid switches to
+// 4 columns. Either way every desktop is visible at once, so no scrolling.
+//
+//   Mouse:     click = jump · double-click = rename · drag = reorder ·
+//              right-click = Pin, Rename, Move, Remove
+//   Keyboard:  arrows move between tiles · Return/Space = jump ·
+//              1–9, 0 = jump to that desktop number · ⌘R = rename ·
+//              ⌥⌘ + arrows = reorder · ⌘⌫ = remove
+//   VoiceOver: each tile is one button ("Mail, Desktop 2, pinned");
+//              Rename/Pin/Move/Remove are in its Actions menu.
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                SectionHeading(title: "Spaces")
-                Spacer()
-                Text("Type to rename · ≡ or ⌥⌘↑↓ to reorder")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
-                    .accessibilityHidden(true) // the same guidance is given as row hints
-                Button {
-                    model.addDesktop()
-                } label: {
-                    Group {
-                        if model.isChangingDesktops {
-                            ProgressView().controlSize(.small)
-                        } else {
-                            Image(systemName: "plus.circle")
-                        }
-                    }
-                    .frame(minWidth: 24, minHeight: 24)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.borderless)
-                .disabled(model.isChangingDesktops)
-                .keyboardShortcut("n", modifiers: .command)
-                .help("Add a desktop (⌘N)")
-                .accessibilityLabel(model.isChangingDesktops ? "Changing desktops, please wait" : "Add desktop")
-                .padding(.trailing, 4)
-            }
-            // A ScrollView in a menu bar window has no natural height, so measure
-            // the rows and size the scroll area to fit (capped so the panel stays on screen).
-            ScrollView {
-                list
-                    .padding(.trailing, 4)
-                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { contentHeight = $0 }
-            }
-            .frame(height: min(max(contentHeight, 30), 360))
-            .scrollIndicators(.automatic)
-        }
+/// Tile sizes and how many columns fit. Everything scales with Text size.
+enum GridMetrics {
+    static func tileWidth(_ scale: CGFloat) -> CGFloat { 100 * scale }
+    static func tileHeight(_ scale: CGFloat) -> CGFloat { 86 * scale }
+    static func gap(_ scale: CGFloat) -> CGFloat { 8 * scale }
+    static func padding(_ scale: CGFloat) -> CGFloat { 14 * scale }
+
+    /// 8 columns (two rows of 8) if that fits on screen, otherwise 4.
+    static func columns(_ scale: CGFloat) -> Int {
+        panelWidth(scale, columns: 8) <= screenWidth * 0.94 ? 8 : 4
     }
 
-    private var list: some View {
-        VStack(alignment: .leading, spacing: 10) {
+    static func panelWidth(_ scale: CGFloat, columns: Int) -> CGFloat {
+        CGFloat(columns) * tileWidth(scale) + CGFloat(columns - 1) * gap(scale) + 2 * padding(scale)
+    }
+}
+
+/// Usable screen width, used to decide between 8 and 4 columns.
+private var screenWidth: CGFloat {
+    (NSScreen.main ?? NSScreen.screens.first)?.visibleFrame.width ?? 1440
+}
+
+private struct DesktopGridView: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.panelScale) private var scale
+    @FocusState private var focusedKey: String?
+
+    private var columns: Int { GridMetrics.columns(scale) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8 * scale) {
+            header
+
             ForEach(model.snapshot.displays) { display in
-                VStack(alignment: .leading, spacing: 6) {
+                let spaces = model.orderedSpaces(for: display)
+                VStack(alignment: .leading, spacing: 6 * scale) {
                     if model.snapshot.displays.count > 1 || model.hasCustomOrder(display) {
                         HStack {
                             if model.snapshot.displays.count > 1 {
                                 Label(display.name, systemImage: "display")
-                                    .font(.caption.weight(.semibold))
-                                    .foregroundStyle(.secondary)
+                                    .skFont(.caption, weight: .semibold)
+                                    .foregroundStyle(Color.skSecondary)
                                     .accessibilityAddTraits(.isHeader)
                             }
                             Spacer()
                             if model.hasCustomOrder(display) {
                                 Button("Reset to Mission Control Order") { model.resetOrder(for: display) }
                                     .buttonStyle(.link)
-                                    .font(.caption)
-                                    .help("Your list order is your own; Mission Control isn't changed. This puts the list back in Mission Control's order.")
+                                    .skFont(.caption)
+                                    .help("Your tile order is your own; Mission Control isn't changed. This puts the tiles back in Mission Control's order.")
                             }
                         }
-                        .padding(.trailing, 4)
                     }
-                    ForEach(model.orderedSpaces(for: display)) { space in
-                        SpaceRow(space: space, isCurrent: space.managedID == display.currentSpaceID)
+
+                    LazyVGrid(
+                        columns: Array(repeating: GridItem(.fixed(GridMetrics.tileWidth(scale)), spacing: GridMetrics.gap(scale)),
+                                       count: columns),
+                        alignment: .leading,
+                        spacing: GridMetrics.gap(scale)
+                    ) {
+                        ForEach(spaces) { space in
+                            DesktopTile(
+                                space: space,
+                                isCurrent: space.managedID == display.currentSpaceID,
+                                columns: columns,
+                                focusedKey: $focusedKey,
+                                moveFocus: { offset in moveFocus(from: space, by: offset, in: spaces) }
+                            )
+                        }
                     }
                 }
                 .accessibilityElement(children: .contain)
-                .accessibilityLabel(model.snapshot.displays.count > 1 ? "Spaces on \(display.name)" : "Spaces")
+                .accessibilityLabel(model.snapshot.displays.count > 1 ? "Desktops on \(display.name)" : "Desktops")
             }
+
             if model.snapshot.displays.isEmpty {
                 Text("SpaceKeeper couldn't read your Spaces.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
+                    .skFont(.callout)
+                    .foregroundStyle(Color.skSecondary)
+            }
+        }
+        // 1–9 and 0 jump straight to Desktop 1–10 (when no name is being edited).
+        .onKeyPress(characters: .decimalDigits, phases: .down) { press in
+            guard model.renamingKey == nil, press.modifiers.isEmpty,
+                  let digit = Int(press.characters) else { return .ignored }
+            let number = digit == 0 ? 10 : digit
+            guard let space = model.snapshot.allSpaces.first(where: { $0.desktopNumber == number }) else { return .ignored }
+            model.jump(to: space)
+            return .handled
+        }
+        // Each time the panel opens, put keyboard focus on the current desktop.
+        .onChange(of: model.panelOpenCount, initial: true) {
+            Task {
+                try? await Task.sleep(for: .milliseconds(50)) // let the panel appear first
+                focusedKey = model.currentSpace?.key ?? model.snapshot.allSpaces.first?.key
             }
         }
     }
+
+    private var header: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12 * scale) {
+            SectionHeading(title: "Desktops")
+            Text("Click to jump · double-click to rename · drag to reorder")
+                .skFont(.caption)
+                .foregroundStyle(Color.skSecondary)
+                .lineLimit(2)
+                .accessibilityHidden(true) // the same guidance is in each tile's hint
+            Spacer()
+            // At the macOS limit of 16, say so in words (not just a greyed-out button).
+            if model.isAtDesktopLimit {
+                Text("\(AppModel.maxDesktopsPerDisplay) of \(AppModel.maxDesktopsPerDisplay) desktops — the macOS maximum")
+                    .skFont(.caption, weight: .semibold)
+                    .foregroundStyle(Color.skSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityHidden(true) // spoken as part of the button's hint
+            }
+            Button {
+                model.addDesktop()
+            } label: {
+                Label {
+                    Text("Add Desktop")
+                } icon: {
+                    if model.isChangingDesktops {
+                        ProgressView().skControlSize()
+                    } else {
+                        Image(systemName: "plus.circle")
+                    }
+                }
+                .skFont(.callout, weight: .medium)
+            }
+            // Greyed out (and ⌘N does nothing) while busy or at the 16-desktop limit.
+            .disabled(!model.canAddDesktop)
+            .keyboardShortcut("n", modifiers: .command)
+            .help(model.isAtDesktopLimit
+                  ? "macOS allows up to \(AppModel.maxDesktopsPerDisplay) desktops. Remove one to add another."
+                  : "Add a desktop (⌘N)")
+            .accessibilityLabel(model.isChangingDesktops ? "Changing desktops, please wait" : "Add desktop")
+            .accessibilityHint(model.isAtDesktopLimit
+                               ? "Unavailable: you have \(AppModel.maxDesktopsPerDisplay) desktops, the macOS maximum. Remove one to add another."
+                               : "Adds a new desktop at the end.")
+        }
+    }
+
+    /// Arrow-key navigation: ←/→ move one tile, ↑/↓ move one row.
+    private func moveFocus(from space: SpaceInfo, by offset: Int, in spaces: [SpaceInfo]) {
+        guard let index = spaces.firstIndex(where: { $0.key == space.key }) else { return }
+        let target = index + offset
+        guard spaces.indices.contains(target) else { return }
+        focusedKey = spaces[target].key
+    }
 }
 
-// ONE row: drag handle ≡, number badge, name field, then pin / switch /
-// remove buttons. Everything a mouse user can do here is also available
-// to keyboard and VoiceOver users:
-//   • rename        – type in the name field
-//   • reorder       – drag ≡, OR ⌥⌘↑/↓ in the name field, OR the
-//                     VoiceOver "Move Up/Move Down" actions, OR right-click
-//   • pin/switch/remove – buttons or right-click menu
-// The whole row is read by VoiceOver as one summary (rowSummary).
-private struct SpaceRow: View {
+/// One desktop tile: number badge, pin marker and name (or a name field while renaming).
+private struct DesktopTile: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.panelScale) private var scale
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.accessibilityDifferentiateWithoutColor) private var withoutColor
-    @ScaledMetric(relativeTo: .caption) private var badgeSize: CGFloat = 22
 
     let space: SpaceInfo
     let isCurrent: Bool
+    let columns: Int
+    var focusedKey: FocusState<String?>.Binding
+    let moveFocus: (Int) -> Void
 
+    @State private var isHovering = false
     @State private var isDropTarget = false
-    @FocusState private var nameFocused: Bool
+    @State private var draftName = ""
+    @FocusState private var nameFieldFocused: Bool
 
     private var name: String { model.displayName(for: space) }
     private var isDesktop: Bool { space.kind == .desktop }
     private var isPinned: Bool { model.isPinned(space) }
     private var isOutOfOrder: Bool { model.alert(for: space) != nil }
+    private var isRenaming: Bool { model.renamingKey == space.key }
+    private var isConfirmingRemove: Bool { model.pendingRemovalKey == space.key }
+    private var isFocused: Bool { focusedKey.wrappedValue == space.key }
+    private var corner: CGFloat { 10 * scale }
 
     var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "line.3.horizontal")
-                .font(.caption)
-                .foregroundStyle(isDesktop ? Color.secondary : Color.clear)
-                .frame(width: 14, height: 24)
-                .contentShape(Rectangle())
-                .help("Drag to reorder this list, or press ⌥⌘↑ / ⌥⌘↓ while editing the name")
-                .accessibilityHidden(true) // reordering is offered as accessibility actions
-                .draggableIf(isDesktop, key: space.key, preview: name)
-
-            numberBadge
-
-            if isDesktop {
-                TextField(space.defaultName, text: nameBinding)
-                    .textFieldStyle(.roundedBorder)
-                    .focused($nameFocused)
-                    .accessibilityLabel("Name for \(space.defaultName)")
-                    .accessibilityHint("Type a name for this desktop. Press Option-Command-Up or Down to move it in the list.")
-            } else {
-                Label(space.defaultName, systemImage: "arrow.up.left.and.arrow.down.right")
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .accessibilityLabel("\(space.defaultName), full-screen app")
-            }
-
-            if model.pendingRemovalKey == space.key {
-                Button("Remove", role: .destructive) { model.removeDesktop(space) }
-                    .controlSize(.small)
-                    .help("Close this desktop. Its windows move to another desktop.")
-                    .accessibilityLabel("Confirm remove \(name)")
-                    .accessibilityHint("Closes this desktop. Its windows move to another desktop.")
-                Button("Cancel") { model.cancelRemoval() }
-                    .controlSize(.small)
-                    .accessibilityLabel("Cancel removing \(name)")
-            } else {
-                rowButtons
-            }
-        }
-        .padding(.vertical, 1)
-        .overlay(alignment: .top) {
-            // Insertion marker while another row is dragged over this one.
-            if isDropTarget {
-                Capsule().fill(Color.accentColor).frame(height: 2).offset(y: -3)
-                    .accessibilityHidden(true)
-            }
-        }
-        .background { if nameFocused { moveShortcuts } }
-        .dropDestination(for: String.self) { keys, _ in
-            guard let key = keys.first, isDesktop else { return false }
-            withAnimation(reduceMotion ? nil : .snappy) { model.move(key: key, to: space) }
-            return true
-        } isTargeted: { isDropTarget = $0 && isDesktop }
-        .contextMenu { menuItems }
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel(rowSummary)
-        .accessibilityAddTraits(isCurrent ? .isSelected : [])
-        .accessibilityActions { accessibilityMoveActions }
-    }
-
-    // MARK: Pieces
-
-    private var numberBadge: some View {
-        Text("\(space.index)")
-            .font(.caption.weight(.bold).monospacedDigit())
-            .foregroundStyle(isCurrent ? Color.white : Color.primary)
-            .frame(minWidth: badgeSize, minHeight: badgeSize)
-            .background(Circle().fill(isCurrent ? Color.accentColor : Color.secondary.opacity(0.18)))
-            .overlay {
-                // A ring as well as the fill, so "current" isn't shown by colour alone.
-                if isCurrent || withoutColor {
-                    Circle().strokeBorder(isCurrent ? Color.primary : Color.clear, lineWidth: 1.5)
+        content
+            .padding(8 * scale)
+            .frame(width: GridMetrics.tileWidth(scale), height: GridMetrics.tileHeight(scale), alignment: .topLeading)
+            .background(RoundedRectangle(cornerRadius: corner).fill(fill))
+            .overlay(RoundedRectangle(cornerRadius: corner).strokeBorder(borderColor, lineWidth: borderWidth))
+            .overlay(alignment: .leading) {
+                // Insertion marker while another tile is dragged over this one.
+                if isDropTarget {
+                    Capsule().fill(Color.accentColor)
+                        .frame(width: 4 * scale)
+                        .offset(x: -GridMetrics.gap(scale) / 2 - 2 * scale)
+                        .accessibilityHidden(true)
                 }
             }
-            .accessibilityHidden(true) // included in the row summary
+            .overlay { if isConfirmingRemove { removeConfirmation } }
+            .contentShape(RoundedRectangle(cornerRadius: corner))
+            .onHover { isHovering = $0 }
+            .onTapGesture { handleClick() }
+            .focusable(!isRenaming)
+            .focused(focusedKey, equals: space.key)
+            .focusEffectDisabled() // we draw a thicker, clearer focus ring ourselves
+            .onKeyPress(phases: .down) { handleKey($0) }
+            .contextMenu { menuItems }
+            .draggableIf(isDesktop && !isRenaming, key: space.key, preview: name)
+            .dropDestination(for: String.self) { keys, _ in
+                guard let key = keys.first, isDesktop else { return false }
+                withAnimation(reduceMotion ? nil : .snappy) { model.move(key: key, to: space) }
+                return true
+            } isTargeted: { isDropTarget = $0 && isDesktop }
+            .help(isDesktop
+                  ? "\(name) — click to jump, double-click to rename, drag to reorder"
+                  : "\(name) — a full-screen app")
+            // VoiceOver: one button per tile, with the other actions in its Actions menu.
+            .accessibilityElement(children: (isRenaming || isConfirmingRemove) ? .contain : .ignore)
+            .accessibilityLabel(summary)
+            .accessibilityAddTraits(isCurrent ? [.isButton, .isSelected] : .isButton)
+            .accessibilityHint(isDesktop ? "Jumps to this desktop. More actions are in the Actions menu." : "")
+            .accessibilityAction { model.jump(to: space) }
+            .accessibilityActions { accessibilityActionItems }
     }
 
+    // MARK: Content
+
     @ViewBuilder
-    private var rowButtons: some View {
-        IconButton(
-            systemImage: isOutOfOrder ? "pin.slash.fill" : (isPinned ? "pin.fill" : "pin"),
-            label: isPinned ? "Unpin \(name)" : "Pin \(name)",
-            help: isPinned ? "Unpin" : "Pin: keep this desktop’s place among your pinned desktops",
-            tint: isOutOfOrder ? .orange : (isPinned ? .accentColor : .secondary)
-        ) {
-            model.togglePin(space)
-        }
-        .disabled(!isDesktop)
+    private var content: some View {
+        VStack(alignment: .leading, spacing: 4 * scale) {
+            HStack(spacing: 4 * scale) {
+                badge
+                Spacer(minLength: 0)
+                if isOutOfOrder {
+                    Image(systemName: "pin.slash.fill").foregroundStyle(.orange)
+                } else if isPinned {
+                    Image(systemName: "pin.fill").foregroundStyle(Color.accentColor)
+                }
+                if !isDesktop {
+                    Image(systemName: "arrow.up.left.and.arrow.down.right").foregroundStyle(Color.skSecondary)
+                }
+            }
+            .skFont(.callout, weight: .semibold)
 
-        IconButton(
-            systemImage: "arrow.right.circle",
-            label: "Switch to \(name)",
-            help: space.desktopNumber.map { "Switch to Desktop \($0)" } ?? "Switch to this Space"
-        ) {
-            model.switchTo(space)
+            if isRenaming {
+                TextField("Name", text: $draftName)
+                    .textFieldStyle(.roundedBorder)
+                    .skFont(.callout)
+                    .focused($nameFieldFocused)
+                    .accessibilityLabel("Name for \(space.defaultName)")
+                    .onSubmit { model.finishRenaming(space, newName: draftName) }
+                    .onExitCommand { model.finishRenaming(space, newName: nil) }
+                    .onAppear {
+                        draftName = model.customName(for: space.key)
+                        nameFieldFocused = true
+                    }
+                    .onChange(of: nameFieldFocused) { _, focused in
+                        // Clicking elsewhere saves the name.
+                        if !focused, isRenaming { model.finishRenaming(space, newName: draftName) }
+                    }
+            } else {
+                Text(name)
+                    .skFont(.callout, weight: isCurrent ? .semibold : .regular)
+                    .foregroundStyle(isDesktop ? Color.primary : Color.skSecondary)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
-        .disabled(isCurrent || !model.canSwitch(to: space))
+    }
 
-        IconButton(systemImage: "minus.circle", label: "Remove \(name)", help: "Remove this desktop") {
-            model.requestRemoval(of: space)
+    /// Number badge: the current desktop gets a filled circle AND a ring (not colour alone).
+    private var badge: some View {
+        Text("\(space.index)")
+            .skFont(.caption, weight: .bold, monospacedDigit: true)
+            .foregroundStyle(isCurrent ? Color.white : Color.primary)
+            .frame(minWidth: 24 * scale, minHeight: 24 * scale)
+            .background(Circle().fill(isCurrent ? Color.accentColor : Color.primary.opacity(0.12)))
+            .overlay { if isCurrent { Circle().strokeBorder(Color.primary, lineWidth: 1.5) } }
+    }
+
+    private var fill: Color {
+        if isCurrent { return Color.accentColor.opacity(0.22) }
+        return Color.primary.opacity(isHovering ? 0.12 : 0.06)
+    }
+
+    /// Focus: a thick black/white ring. Current desktop: an accent-coloured ring.
+    /// They differ in thickness and colour, so they're easy to tell apart.
+    private var borderColor: Color {
+        if isFocused { return Color.primary }
+        if isCurrent { return Color.accentColor }
+        return Color.primary.opacity(0.2)
+    }
+
+    private var borderWidth: CGFloat {
+        if isFocused { return max(3, 3 * scale) }
+        if isCurrent { return max(2, 2 * scale) }
+        return 1
+    }
+
+    private var removeConfirmation: some View {
+        VStack(spacing: 4 * scale) {
+            Text("Remove?").skFont(.caption, weight: .semibold)
+            Button("Remove", role: .destructive) { model.removeDesktop(space) }
+                .accessibilityLabel("Confirm remove \(name)")
+            Button("Cancel") { model.cancelRemoval() }
+                .accessibilityLabel("Cancel removing \(name)")
         }
-        .disabled(!model.canRemove(space))
+        .skControlSize()
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: corner))
+    }
+
+    // MARK: Actions
+
+    private func handleClick() {
+        guard !isRenaming, !isConfirmingRemove else { return }
+        focusedKey.wrappedValue = space.key
+        if (NSApp.currentEvent?.clickCount ?? 1) >= 2 {
+            model.startRenaming(space) // second click of a double-click
+        } else {
+            model.jump(to: space, waitForDoubleClick: isDesktop)
+        }
+    }
+
+    private func handleKey(_ press: KeyPress) -> KeyPress.Result {
+        guard !isRenaming else { return .ignored }
+        let reorder = press.modifiers.contains(.command) && press.modifiers.contains(.option)
+        switch press.key {
+        case .return, .space:
+            model.jump(to: space)
+        case .leftArrow:
+            reorder ? move(by: -1) : moveFocus(-1)
+        case .rightArrow:
+            reorder ? move(by: 1) : moveFocus(1)
+        case .upArrow:
+            reorder ? move(by: -columns) : moveFocus(-columns)
+        case .downArrow:
+            reorder ? move(by: columns) : moveFocus(columns)
+        case .delete where press.modifiers.contains(.command):
+            if model.canRemove(space) { model.requestRemoval(of: space) }
+        default:
+            if press.modifiers.contains(.command), press.characters.lowercased() == "r" {
+                model.startRenaming(space)
+            } else {
+                return .ignored
+            }
+        }
+        return .handled
+    }
+
+    /// Moves the tile earlier (negative) or later (positive) in your order, one step at a time.
+    private func move(by steps: Int) {
+        let direction = steps < 0 ? -1 : 1
+        var moved = 0
+        withAnimation(reduceMotion ? nil : .snappy) {
+            for _ in 0..<abs(steps) where model.canMove(space, by: direction) {
+                model.move(space, by: direction)
+                moved += 1
+            }
+        }
+        if moved > 0 { A11y.announce("Moved \(name) \(direction < 0 ? "earlier" : "later")") }
+        focusedKey.wrappedValue = space.key
     }
 
     @ViewBuilder
     private var menuItems: some View {
-        Button("Move Up") { move(-1) }
-            .disabled(!model.canMove(space, by: -1))
-        Button("Move Down") { move(1) }
-            .disabled(!model.canMove(space, by: 1))
-        Divider()
+        Button("Jump to \(name)") { model.jump(to: space) }
+            .disabled(isCurrent || !model.canSwitch(to: space))
+        Button("Rename…") { model.startRenaming(space) }
+            .disabled(!isDesktop)
         Button(isPinned ? "Unpin" : "Pin") { model.togglePin(space) }
             .disabled(!isDesktop)
-        Button("Switch to Desktop") { model.switchTo(space) }
-            .disabled(isCurrent || !model.canSwitch(to: space))
+        Divider()
+        Button("Move Earlier") { move(by: -1) }
+            .disabled(!model.canMove(space, by: -1))
+        Button("Move Later") { move(by: 1) }
+            .disabled(!model.canMove(space, by: 1))
         Divider()
         Button("Remove Desktop…", role: .destructive) { model.requestRemoval(of: space) }
             .disabled(!model.canRemove(space))
     }
 
     @ViewBuilder
-    private var accessibilityMoveActions: some View {
-        if model.canMove(space, by: -1) {
-            Button("Move Up") { move(-1) }
+    private var accessibilityActionItems: some View {
+        if isDesktop {
+            Button("Rename") { model.startRenaming(space) }
+            Button(isPinned ? "Unpin" : "Pin") { model.togglePin(space) }
         }
-        if model.canMove(space, by: 1) {
-            Button("Move Down") { move(1) }
-        }
+        if model.canMove(space, by: -1) { Button("Move earlier") { move(by: -1) } }
+        if model.canMove(space, by: 1) { Button("Move later") { move(by: 1) } }
+        if model.canRemove(space) { Button("Remove") { model.requestRemoval(of: space) } }
     }
 
-    /// ⌥⌘↑ / ⌥⌘↓ while the name field has focus.
-    private var moveShortcuts: some View {
-        ZStack {
-            Button("Move Up") { move(-1) }
-                .keyboardShortcut(.upArrow, modifiers: [.command, .option])
-            Button("Move Down") { move(1) }
-                .keyboardShortcut(.downArrow, modifiers: [.command, .option])
-        }
-        .opacity(0)
-        .frame(width: 0, height: 0)
-        .accessibilityHidden(true)
-    }
-
-    private func move(_ offset: Int) {
-        guard model.canMove(space, by: offset) else { return }
-        withAnimation(reduceMotion ? nil : .snappy) { model.move(space, by: offset) }
-        A11y.announce("Moved \(name) \(offset < 0 ? "up" : "down")")
-    }
-
-    private var rowSummary: String {
+    private var summary: String {
         var parts = [name]
         if name != space.defaultName { parts.append(space.defaultName) }
+        if !isDesktop { parts.append("full-screen app") }
         if isCurrent { parts.append("current") }
         if isPinned { parts.append("pinned") }
         if isOutOfOrder { parts.append("out of pinned order") }
         return parts.joined(separator: ", ")
     }
-
-    private var nameBinding: Binding<String> {
-        Binding(
-            get: { model.customName(for: space.key) },
-            set: { model.rename(space, to: $0) }
-        )
-    }
 }
-
-// MARK: - Settings & footer
 
 // --- SETTINGS -------------------------------------------------------------
 // Collapsed by default: clicking the "Settings" heading shows or hides the
@@ -581,6 +857,7 @@ private struct SpaceRow: View {
 // the control saves the setting immediately (see "Settings" in AppModel).
 private struct SettingsSection: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.panelScale) private var scale
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     // Collapsed by default, so the panel opens showing just your desktops.
@@ -596,11 +873,11 @@ private struct SettingsSection: View {
             } label: {
                 HStack(spacing: 6) {
                     Text("Settings")
-                        .font(.headline)
+                        .skFont(.headline)
                     Spacer()
                     Image(systemName: "chevron.right")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
+                        .skFont(.caption, weight: .semibold)
+                        .foregroundStyle(Color.skSecondary)
                         .rotationEffect(.degrees(isExpanded ? 90 : 0))
                 }
                 .frame(maxWidth: .infinity, minHeight: 24)
@@ -615,65 +892,83 @@ private struct SettingsSection: View {
             .accessibilityAddTraits(.isHeader)
 
             if isExpanded {
+                // Scrolls if the settings don't fit on screen (e.g. at the largest text size).
+                FittedScroll(maxHeight: screenHeight * 0.4) {
+                    // Two columns of settings when the panel is wide, one otherwise.
+                    LazyVGrid(
+                        columns: Array(repeating: GridItem(.flexible(), spacing: 32 * scale, alignment: .leading),
+                                       count: GridMetrics.columns(scale) == 8 ? 2 : 1),
+                        alignment: .leading,
+                        spacing: 8 * scale
+                    ) {
 
-                SettingRow("Keep Spaces in a fixed order") {
-                    Toggle("Keep Spaces in a fixed order", isOn: $model.keepSpacesInOrder)
-                }
-                SettingRow("Show name when switching") {
-                    Toggle("Show name when switching", isOn: $model.showHUD)
-                }
-                SettingRow("Show name in menu bar") {
-                    Toggle("Show name in menu bar", isOn: $model.showNameInMenuBar)
-                }
-                SettingRow("Label each desktop") {
-                    Toggle("Label each desktop", isOn: $model.showDesktopLabels)
-                }
+                        SettingRow("Text size") {
+                            Picker("Panel text size", selection: $model.panelTextSize) {
+                                ForEach(PanelTextSize.allCases) { Text($0.title).tag($0) }
+                            }
+                            .fixedSize()
+                        }
+                        SettingRow("Keep Spaces in a fixed order") {
+                            Toggle("Keep Spaces in a fixed order", isOn: $model.keepSpacesInOrder)
+                        }
+                        SettingRow("Show name when switching") {
+                            Toggle("Show name when switching", isOn: $model.showHUD)
+                        }
+                        SettingRow("Show name in menu bar") {
+                            Toggle("Show name in menu bar", isOn: $model.showNameInMenuBar)
+                        }
+                        SettingRow("Label each desktop") {
+                            Toggle("Label each desktop", isOn: $model.showDesktopLabels)
+                        }
 
-                if model.showDesktopLabels {
-                    SettingRow("Corner") {
-                        Picker("Label corner", selection: $model.labelCorner) {
-                            ForEach(LabelCorner.allCases) { Text($0.title).tag($0) }
+                        if model.showDesktopLabels {
+                            SettingRow("Corner") {
+                                Picker("Label corner", selection: $model.labelCorner) {
+                                    ForEach(LabelCorner.allCases) { Text($0.title).tag($0) }
+                                }
+                                .fixedSize()
+                            }
+                            SettingRow("Layer") {
+                                Picker("Label layer", selection: $model.labelLayer) {
+                                    ForEach(LabelLayer.allCases) { Text($0.title).tag($0) }
+                                }
+                                .fixedSize()
+                            }
+                            SettingRow("Opacity") {
+                                Slider(value: $model.labelOpacity, in: 0.3...1, step: 0.05) {
+                                    Text("Label opacity")
+                                }
+                                .frame(width: 150 * scale)
+                                .accessibilityValue("\(Int((model.labelOpacity * 100).rounded())) percent")
+                            }
                         }
-                        .fixedSize()
-                    }
-                    SettingRow("Layer") {
-                        Picker("Label layer", selection: $model.labelLayer) {
-                            ForEach(LabelLayer.allCases) { Text($0.title).tag($0) }
-                        }
-                        .fixedSize()
-                    }
-                    SettingRow("Opacity") {
-                        Slider(value: $model.labelOpacity, in: 0.3...1, step: 0.05) {
-                            Text("Label opacity")
-                        }
-                        .frame(width: 150)
-                        .accessibilityValue("\(Int((model.labelOpacity * 100).rounded())) percent")
-                    }
-                }
 
-                if model.showDesktopLabels || model.showHUD {
-                    SettingRow("Label and banner size") {
-                        Picker("Label and banner text size", selection: $model.overlayTextSize) {
-                            ForEach(OverlayTextSize.allCases) { Text($0.title).tag($0) }
+                        if model.showDesktopLabels || model.showHUD {
+                            SettingRow("Label and banner size") {
+                                Picker("Label and banner text size", selection: $model.overlayTextSize) {
+                                    ForEach(OverlayTextSize.allCases) { Text($0.title).tag($0) }
+                                }
+                                .fixedSize()
+                            }
                         }
-                        .fixedSize()
-                    }
-                }
 
-                SettingRow("Open SpaceKeeper with ⌃⌥S") {
-                    Toggle("Open SpaceKeeper with Control-Option-S", isOn: $model.openWithModifierTap)
-                }
-                .help("Press Control-Option-S (or tap Control-Option on its own) to open or close SpaceKeeper from any app.")
-                SettingRow("Notify when pinned order changes") {
-                    Toggle("Notify when pinned order changes", isOn: $model.notifyPinMoves)
-                }
-                SettingRow("Launch at login") {
-                    Toggle("Launch at login", isOn: $model.launchAtLogin)
+                        SettingRow("Open with fn-S (or ⌃⌥S)") {
+                            Toggle("Open SpaceKeeper with fn S, or Control Option S", isOn: $model.openWithModifierTap)
+                        }
+                        .help("Press fn-S (or Control-Option-S on keyboards without fn) to open or close SpaceKeeper from any app.")
+                        SettingRow("Notify when pinned order changes") {
+                            Toggle("Notify when pinned order changes", isOn: $model.notifyPinMoves)
+                        }
+                        SettingRow("Launch at login") {
+                            Toggle("Launch at login", isOn: $model.launchAtLogin)
+                        }
+                    }
+                    .padding(.trailing, 4)
                 }
             }
         }
         .toggleStyle(.switch)
-        .controlSize(.small)
+        .skControlSize()
     }
 }
 
@@ -720,11 +1015,30 @@ private struct FooterView: View {
                     .help("Make sure “Switch to Desktop N” is on under Mission Control.")
             }
             Spacer()
+            // Always-visible text size controls (also ⌘− / ⌘+).
+            Button {
+                model.panelTextSize = model.panelTextSize.smaller
+            } label: {
+                Text("A").skFont(.caption, weight: .semibold)
+            }
+            .disabled(model.panelTextSize == .standard)
+            .help("Smaller text (⌘−)")
+            .accessibilityLabel("Smaller text")
+            .accessibilityValue(model.panelTextSize.title)
+            Button {
+                model.panelTextSize = model.panelTextSize.bigger
+            } label: {
+                Text("A").skFont(.title3, weight: .semibold)
+            }
+            .disabled(model.panelTextSize == .largest)
+            .help("Larger text (⌘+)")
+            .accessibilityLabel("Larger text")
+            .accessibilityValue(model.panelTextSize.title)
             Button("Quit") { NSApplication.shared.terminate(nil) }
                 .keyboardShortcut("q")
                 .accessibilityLabel("Quit SpaceKeeper")
         }
-        .controlSize(.small)
+        .skControlSize()
     }
 }
 
@@ -740,7 +1054,7 @@ private struct DiagnosticsView: View {
         DisclosureGroup("Diagnostics", isExpanded: $isExpanded) {
             VStack(alignment: .leading, spacing: 6) {
                 Text(model.diagnosticsReport)
-                    .font(.caption.monospaced())
+                    .skFont(.mono)
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
                 Button("Copy Report") {
@@ -748,17 +1062,17 @@ private struct DiagnosticsView: View {
                     NSPasteboard.general.setString(model.diagnosticsReport, forType: .string)
                     A11y.announce("Diagnostics report copied")
                 }
-                .controlSize(.small)
+                .skControlSize()
             }
             .padding(.top, 4)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .font(.callout)
+        .skFont(.callout)
     }
 }
 
 // draggableIf: makes something draggable only when allowed (full-screen
-// Spaces can't be reordered). Used by SpaceRow's ≡ handle.
+// Spaces can't be reordered). Used by DesktopTile.
 private extension View {
     /// Makes the view a drag source for a Space key, only when `enabled`.
     @ViewBuilder
@@ -766,7 +1080,7 @@ private extension View {
         if enabled {
             draggable(key) {
                 Text(preview)
-                    .font(.callout.weight(.medium))
+                    .skFont(.callout, weight: .medium)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 5)
                     .background(.regularMaterial, in: .capsule)

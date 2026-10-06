@@ -22,7 +22,8 @@
 //                          accessibility helpers
 //   MissionControl.swift   adds/removes desktops by driving Mission Control
 //   Overlays.swift         the switch banner (HUD) and the desktop labels
-//   OpenShortcut.swift     ⌃⌥ tap detection + the floating "quick panel"
+//   StatusItemController.swift  the menu bar icon (click → panel)
+//   OpenShortcut.swift     ⌃⌥ tap detection + the floating panel (desktop grid)
 //   GlobalHotKey.swift     the ⌃⌥S keyboard shortcut
 //   Models.swift           the plain data types everything above shares,
 //                          and saving/loading them
@@ -51,24 +52,16 @@
 import AppKit
 import SwiftUI
 
-// The app itself. SwiftUI builds the menu bar item from `body`.
-// `MenuBarExtra` = an icon in the menu bar that opens a panel when clicked.
-// • The panel's content is MenuPanelView (Views/MenuPanelView.swift).
-// • The icon/text in the menu bar is MenuBarLabel (further down this file).
-// • `.environment(appDelegate.model)` passes the single AppModel down to
-//   every view, so they all share the same data.
+// The app itself.
+// SpaceKeeper has no ordinary windows: its menu bar icon is created by
+// StatusItemController and its panel by QuickPanelController. SwiftUI
+// still needs at least one "scene", so we declare an empty Settings scene.
 @main
 struct SpaceKeeperApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     var body: some Scene {
-        MenuBarExtra {
-            MenuPanelView()
-                .environment(appDelegate.model)
-        } label: {
-            MenuBarLabel(model: appDelegate.model)
-        }
-        .menuBarExtraStyle(.window)
+        Settings { EmptyView() }
     }
 }
 
@@ -77,60 +70,13 @@ struct SpaceKeeperApp: App {
 // AppModel and to start it up once the app is ready.
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private(set) lazy var model = AppModel()
+    private var statusItem: StatusItemController?
 
     // Runs once at launch: hide the Dock icon (this is a menu-bar-only app)
     // and start the model (AppModel.start() begins watching your Spaces).
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory) // menu bar only, no Dock icon
         model.start()
+        statusItem = StatusItemController(model: model)
     }
-}
-
-// What appears in the menu bar itself: an icon, plus the current Space's
-// name if "Show name in menu bar" is on. If a pinned desktop has moved
-// (AppModel.pinAlerts is not empty) the icon becomes an orange warning
-// triangle. `spokenLabel` is what VoiceOver reads for this item.
-struct MenuBarLabel: View {
-    let model: AppModel
-
-    var body: some View {
-        let name = model.currentSpace.map { model.displayName(for: $0).truncated(to: 24) }
-        Group {
-            if model.pinAlerts.isEmpty {
-                if model.showNameInMenuBar, let name {
-                    Text("\(Image(systemName: "square.stack.3d.up.fill")) \(name)")
-                } else {
-                    Image(systemName: "square.stack.3d.up.fill")
-                }
-            } else {
-                // Shape (a warning triangle) as well as colour marks the problem.
-                if model.showNameInMenuBar, let name {
-                    Text("\(Image(nsImage: Self.warningIcon)) \(name)")
-                } else {
-                    Image(nsImage: Self.warningIcon)
-                }
-            }
-        }
-        .accessibilityLabel(spokenLabel)
-    }
-
-    private var spokenLabel: String {
-        var text = "SpaceKeeper"
-        if let space = model.currentSpace {
-            text += ", current Space: \(model.displayName(for: space))"
-        }
-        if !model.pinAlerts.isEmpty {
-            text += ", warning: pinned order changed"
-        }
-        return text
-    }
-
-    private static let warningIcon: NSImage = {
-        let config = NSImage.SymbolConfiguration(paletteColors: [.systemOrange])
-        let image = NSImage(systemSymbolName: "exclamationmark.triangle.fill",
-                            accessibilityDescription: "Pinned desktop order changed")?
-            .withSymbolConfiguration(config) ?? NSImage()
-        image.isTemplate = false
-        return image
-    }()
 }

@@ -212,6 +212,34 @@ nonisolated enum LabelLayer: String, Codable, CaseIterable, Identifiable, Sendab
     }
 }
 
+// Accessibility: text and icon size for the PANEL itself (Settings › Text size,
+// or ⌘+ / ⌘− / ⌘0 while the panel is open). macOS doesn't let menu bar apps
+// follow a system-wide text size, so SpaceKeeper offers its own. "Largest"
+// doubles everything, meeting the WCAG 1.4.4 "resize text to 200 %" guideline.
+nonisolated enum PanelTextSize: String, Codable, CaseIterable, Identifiable, Sendable {
+    case standard, large, extraLarge, largest
+    var id: Self { self }
+    var title: String {
+        switch self {
+        case .standard: "Standard"
+        case .large: "Large"
+        case .extraLarge: "Extra large"
+        case .largest: "Largest (200 %)"
+        }
+    }
+    /// Multiplier applied to every font, icon and the panel width.
+    var scale: CGFloat {
+        switch self {
+        case .standard: 1.0
+        case .large: 1.3
+        case .extraLarge: 1.6
+        case .largest: 2.0
+        }
+    }
+    var bigger: PanelTextSize { Self.allCases[min(Self.allCases.firstIndex(of: self)! + 1, Self.allCases.count - 1)] }
+    var smaller: PanelTextSize { Self.allCases[max(Self.allCases.firstIndex(of: self)! - 1, 0)] }
+}
+
 // Accessibility: text size for the desktop labels and the switch banner
 // (Settings › Label and banner size). Used in Overlays.swift.
 nonisolated enum OverlayTextSize: String, Codable, CaseIterable, Identifiable, Sendable {
@@ -255,9 +283,10 @@ nonisolated struct AppSettings: Codable, Hashable, Sendable {
     var notifyPinMoves = false
     var openWithModifierTap = true
     var overlayTextSize: OverlayTextSize = .standard
+    var panelTextSize: PanelTextSize = .standard
 
     enum CodingKeys: String, CodingKey {
-        case showHUD, showNameInMenuBar, showDesktopLabels, labelCorner, labelLayer, labelOpacity, notifyPinMoves, openWithModifierTap, overlayTextSize
+        case showHUD, showNameInMenuBar, showDesktopLabels, labelCorner, labelLayer, labelOpacity, notifyPinMoves, openWithModifierTap, overlayTextSize, panelTextSize
     }
 
     init() {}
@@ -275,6 +304,7 @@ nonisolated struct AppSettings: Codable, Hashable, Sendable {
         notifyPinMoves = try c.decodeIfPresent(Bool.self, forKey: .notifyPinMoves) ?? d.notifyPinMoves
         openWithModifierTap = try c.decodeIfPresent(Bool.self, forKey: .openWithModifierTap) ?? d.openWithModifierTap
         overlayTextSize = try c.decodeIfPresent(OverlayTextSize.self, forKey: .overlayTextSize) ?? d.overlayTextSize
+        panelTextSize = try c.decodeIfPresent(PanelTextSize.self, forKey: .panelTextSize) ?? d.panelTextSize
     }
 }
 
