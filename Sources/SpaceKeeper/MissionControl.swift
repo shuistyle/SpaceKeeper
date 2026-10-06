@@ -86,7 +86,12 @@ enum MissionControl {
                 lastAddReport = "+ button found, press \(pressed ? "sent" : "failed"), no position to click"
                 return .failure(.controlNotFound)
             }
-            click(at: CGPoint(x: frame.midX, y: frame.midY))
+            let point = CGPoint(x: frame.midX, y: frame.midY)
+            guard isOnScreen(button, at: point) else {
+                lastAddReport = "+ button found, press \(pressed ? "sent" : "failed"); something else was on screen there, so no click was made"
+                return .failure(.controlNotFound)
+            }
+            click(at: point)
             try? await Task.sleep(for: .milliseconds(500))
             let added = thumbnailCount(roots) > before
             lastAddReport = added
@@ -101,18 +106,31 @@ enum MissionControl {
         findSpacesBar(in: roots).spaceLists.reduce(0) { $0 + children(of: $1).count }
     }
 
-    /// Every element that could be the "+" button: buttons labelled "add desktop",
-    /// plus — in case the label is different (another language, a new macOS) —
-    /// any button sitting next to a desktop strip rather than inside it.
+    /// The "+" buttons: ONLY elements Mission Control itself identifies as
+    /// "mc.spaces.add" or labels "add desktop" (found by findSpacesBar).
+    /// (Earlier versions also accepted any button next to the desktop strip,
+    /// which risked pressing the wrong control. If a future macOS renames the
+    /// button, Add Desktop reports "no + button found" instead of guessing.)
     private static func addButtonCandidates(in bar: SpacesBar) -> [AXUIElement] {
-        var found = bar.addButtons
-        if found.isEmpty {
-            for list in bar.spaceLists {
-                guard let parent = parent(of: list) else { continue }
-                found += children(of: parent).filter { string($0, kAXRoleAttribute) == kAXButtonRole }
-            }
+        bar.addButtons
+    }
+
+    /// Is `button` really what's on screen at `point`? Asks macOS which
+    /// element is under that point and compares. Used before a simulated
+    /// click, so the click can only ever land on the "+" button itself.
+    private static func isOnScreen(_ button: AXUIElement, at point: CGPoint) -> Bool {
+        var hit: AXUIElement?
+        guard AXUIElementCopyElementAtPosition(AXUIElementCreateSystemWide(), Float(point.x), Float(point.y), &hit) == .success,
+              let hit
+        else { return false }
+        // The hit may be the button itself or something inside it.
+        var element: AXUIElement? = hit
+        for _ in 0..<4 {
+            guard let current = element else { break }
+            if CFEqual(current, button) { return true }
+            element = parent(of: current)
         }
-        return found
+        return false
     }
 
     /// Removes one desktop (identified by its Space key) from the given display.
