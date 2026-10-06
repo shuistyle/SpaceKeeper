@@ -26,9 +26,20 @@ find_identity() {
     | grep -F "\"$1" | head -1 | sed -E 's/^ *[0-9]+\) ([0-9A-F]{40}) .*/\1/' || true
 }
 
+# The private key exists as a file only for a moment, in a private temporary
+# folder. The EXIT "trap" deletes that folder however the script ends —
+# success, an error or Ctrl-C — so the key is never left lying around.
+SIGNING_TMP=""
+cleanup_signing_tmp() { [[ -n "$SIGNING_TMP" ]] && rm -rf "$SIGNING_TMP"; SIGNING_TMP=""; }
+trap cleanup_signing_tmp EXIT
+
 create_local_identity() {
   echo "▸ Creating a self-signed code-signing certificate (“${LOCAL_CERT}”)…"
-  local tmp; tmp="$(mktemp -d)"
+  local tmp
+  tmp="$(umask 077; mktemp -d)"   # only you can read the folder
+  SIGNING_TMP="$tmp"
+  # A random one-time password for the temporary .p12 bundle (never stored).
+  local p12pass; p12pass="$(/usr/bin/openssl rand -hex 16)"
   cat > "$tmp/cert.cnf" <<CNF
 [req]
 distinguished_name = dn
@@ -41,17 +52,17 @@ basicConstraints = critical,CA:false
 keyUsage = critical,digitalSignature
 extendedKeyUsage = critical,codeSigning
 CNF
-  /usr/bin/openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
-    -config "$tmp/cert.cnf" -keyout "$tmp/key.pem" -out "$tmp/cert.pem" >/dev/null 2>&1
+  (umask 077; /usr/bin/openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
+    -config "$tmp/cert.cnf" -keyout "$tmp/key.pem" -out "$tmp/cert.pem" >/dev/null 2>&1)
 
   # macOS's keychain can't read PKCS#12 files made with OpenSSL 3's defaults.
   local legacy=""
   /usr/bin/openssl version | grep -q "^OpenSSL 3" && legacy="-legacy"
   /usr/bin/openssl pkcs12 -export $legacy -inkey "$tmp/key.pem" -in "$tmp/cert.pem" \
-    -name "$LOCAL_CERT" -out "$tmp/identity.p12" -passout pass:spacekeeper
+    -name "$LOCAL_CERT" -out "$tmp/identity.p12" -passout "pass:${p12pass}"
 
-  security import "$tmp/identity.p12" -k "$KEYCHAIN" -P spacekeeper -T /usr/bin/codesign >/dev/null
-  rm -rf "$tmp"
+  security import "$tmp/identity.p12" -k "$KEYCHAIN" -P "$p12pass" -T /usr/bin/codesign >/dev/null
+  cleanup_signing_tmp
   echo "  Created. If macOS asks whether codesign may use the key, click “Always Allow”."
   NEW_IDENTITY=1
 }
