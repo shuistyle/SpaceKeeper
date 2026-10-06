@@ -627,6 +627,16 @@ final class AppModel {
             // Give the menu bar panel a moment to close before pressing the shortcut.
             try? await Task.sleep(for: .milliseconds(200))
             guard let self else { return }
+            // The app you were using. Some apps — Parallels Desktop, other virtual
+            // machines and remote-desktop apps — switch macOS's desktop shortcuts
+            // OFF while they're in front, so they can pass the keys to the other
+            // computer. If the first press doesn't work, SpaceKeeper briefly makes
+            // itself the active app (which makes that app turn the shortcuts back
+            // on) and presses again.
+            let frontApp = NSWorkspace.shared.frontmostApplication
+            let frontName = frontApp?.localizedName ?? "unknown app"
+            let weAreFront = frontApp?.processIdentifier == ProcessInfo.processInfo.processIdentifier
+
             switch SpaceSwitcher.switchTo(desktop: number) {
             case .failure(let error):
                 self.statusMessage = error.message
@@ -635,8 +645,20 @@ final class AppModel {
                 // The switch animation takes about half a second.
                 try? await Task.sleep(for: .milliseconds(900))
                 self.refresh()
-                let moved = self.snapshot.activeSpaceID != startingSpace
-                self.lastSwitchReport = "Desktop \(number): pressed \(shortcut.symbol) → \(moved ? "switched" : "macOS did not switch")"
+                var moved = self.snapshot.activeSpaceID != startingSpace
+                var retried = false
+                if !moved && !weAreFront {
+                    retried = true
+                    NSApp.activate()
+                    try? await Task.sleep(for: .milliseconds(300))
+                    _ = SpaceSwitcher.switchTo(desktop: number)
+                    try? await Task.sleep(for: .milliseconds(900))
+                    self.refresh()
+                    moved = self.snapshot.activeSpaceID != startingSpace
+                }
+                let outcome = moved ? "switched" : "macOS did not switch"
+                self.lastSwitchReport = "Desktop \(number): pressed \(shortcut.symbol) while \(frontName) was in front"
+                    + (retried ? ", then again with SpaceKeeper in front" : "") + " → \(outcome)"
                 self.statusMessage = moved ? nil
                     : "SpaceKeeper pressed \(shortcut.symbol) but macOS didn't switch. Check that “Switch to Desktop \(number)” is ticked in Keyboard Shortcuts › Mission Control, and that pressing \(shortcut.symbol) yourself works."
             }
@@ -663,7 +685,7 @@ final class AppModel {
     // thing that a feature depends on, to make problems easy to track down.
     /// Plain-text report of everything switching depends on.
     var diagnosticsReport: String {
-        let desktops = snapshot.allSpaces.compactMap(\.desktopNumber).filter { $0 <= 4 }
+        let desktops = snapshot.allSpaces.compactMap(\.desktopNumber).filter { $0 <= SpaceSwitcher.maxDesktop }
         let shortcuts = (desktops.isEmpty ? [1, 2] : desktops)
             .map { "  Desktop \($0): \(SpaceSwitcher.shortcutState(forDesktop: $0).summary)" }
             .joined(separator: "\n")
