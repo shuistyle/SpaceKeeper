@@ -246,7 +246,7 @@ enum MissionControl {
             result = await body(bar, roots)
             try? await Task.sleep(for: .milliseconds(600))
         }
-        closeMissionControl()
+        closeMissionControl(roots)
         // Put the pointer back where it was (we may have moved it to open the strip).
         _ = movedPointer
         if let originalPointer { movePointer(to: originalPointer) }
@@ -258,11 +258,29 @@ enum MissionControl {
             .post(tap: .cghidEventTap)
     }
 
-    private static func closeMissionControl() {
+    /// Closes Mission Control by pressing Escape — but ONLY if Mission Control
+    /// is still showing. Otherwise that Escape would go to the app you're
+    /// using, where it could cancel a dialog or close a sheet.
+    private static func closeMissionControl(_ roots: [AXUIElement]) {
+        guard isMissionControlShowing(roots) else { return }
         let source = CGEventSource(stateID: .hidSystemState)
         for isDown in [true, false] {
             CGEvent(keyboardEventSource: source, virtualKey: 53, keyDown: isDown)?.post(tap: .cghidEventTap) // Escape
         }
+    }
+
+    /// True while Mission Control's own controls (identifiers starting "mc",
+    /// e.g. "mc.spaces") are on screen. They only exist while it's open.
+    private static func isMissionControlShowing(_ roots: [AXUIElement]) -> Bool {
+        func search(_ element: AXUIElement, depth: Int) -> Bool {
+            guard depth < 8 else { return false }
+            if let id = string(element, kAXIdentifierAttribute), id.hasPrefix("mc"),
+               !children(of: element).isEmpty {
+                return true
+            }
+            return children(of: element).contains { search($0, depth: depth + 1) }
+        }
+        return roots.contains { search($0, depth: 0) }
     }
 
     // MARK: - Accessibility tree
@@ -365,7 +383,14 @@ enum MissionControl {
         movePointer(to: CGPoint(x: top.midX, y: top.minY + 2)) // expands the desktop strip
         try? await Task.sleep(for: .milliseconds(800))
         let path = saveTreeMap(dockElement)
-        closeMissionControl()
+        var roots: [AXUIElement] = []
+        if let windowManager = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.WindowManager").first {
+            let element = AXUIElementCreateApplication(windowManager.processIdentifier)
+            AXUIElementSetMessagingTimeout(element, 1.0)
+            roots.append(element)
+        }
+        roots.append(dockElement)
+        closeMissionControl(roots)
         if let originalPointer { movePointer(to: originalPointer) }
         return path.map(URL.init(fileURLWithPath:))
     }
