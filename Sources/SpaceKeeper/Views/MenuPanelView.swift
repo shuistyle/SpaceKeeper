@@ -607,6 +607,7 @@ private struct DesktopTile: View {
     @Environment(AppModel.self) private var model
     @Environment(\.panelScale) private var scale
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.colorSchemeContrast) private var contrast
 
     let space: SpaceInfo
     let isCurrent: Bool
@@ -627,6 +628,15 @@ private struct DesktopTile: View {
     private var isConfirmingRemove: Bool { model.pendingRemovalKey == space.key }
     private var isFocused: Bool { focusedKey.wrappedValue == space.key }
     private var corner: CGFloat { 10 * scale }
+
+    // Colour (optional; DesktopColor in Models.swift). A coloured tile is filled
+    // with its colour and uses black or white text chosen for at least 7:1
+    // contrast; uncoloured tiles keep the normal light/dark-mode look.
+    private var tileColor: DesktopColor? { isDesktop ? model.color(for: space) : nil }
+    private var foreground: Color {
+        guard let tileColor else { return Color.primary }
+        return tileColor.usesDarkText ? .black : .white
+    }
 
     var body: some View {
         content
@@ -659,7 +669,7 @@ private struct DesktopTile: View {
                 return true
             } isTargeted: { isDropTarget = $0 && isDesktop }
             .help(isDesktop
-                  ? "\(name) — click to jump, double-click to rename, drag to reorder"
+                  ? "\(name) — click to jump, double-click to rename, drag to reorder, right-click to choose a colour"
                   : "\(name) — a full-screen app")
             // VoiceOver: one button per tile, with the other actions in its Actions menu.
             .accessibilityElement(children: (isRenaming || isConfirmingRemove) ? .contain : .ignore)
@@ -677,11 +687,17 @@ private struct DesktopTile: View {
         VStack(alignment: .leading, spacing: 4 * scale) {
             HStack(spacing: 4 * scale) {
                 badge
+                // The colour's own symbol, so it never relies on colour alone.
+                if let tileColor {
+                    Image(systemName: tileColor.symbol)
+                        .foregroundStyle(foreground)
+                        .accessibilityHidden(true)
+                }
                 Spacer(minLength: 0)
                 if isOutOfOrder {
-                    Image(systemName: "pin.slash.fill").foregroundStyle(.orange)
+                    Image(systemName: "pin.slash.fill").foregroundStyle(tileColor == nil ? Color.orange : foreground)
                 } else if isPinned {
-                    Image(systemName: "pin.fill").foregroundStyle(Color.accentColor)
+                    Image(systemName: "pin.fill").foregroundStyle(tileColor == nil ? Color.accentColor : foreground)
                 }
                 if !isDesktop {
                     Image(systemName: "arrow.up.left.and.arrow.down.right").foregroundStyle(Color.skSecondary)
@@ -715,7 +731,7 @@ private struct DesktopTile: View {
             } else {
                 Text(name)
                     .skFont(.callout, weight: isCurrent ? .semibold : .regular)
-                    .foregroundStyle(isDesktop ? Color.primary : Color.skSecondary)
+                    .foregroundStyle(isDesktop ? foreground : Color.skSecondary)
                     .lineLimit(2)
                     .multilineTextAlignment(.leading)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -727,13 +743,30 @@ private struct DesktopTile: View {
     private var badge: some View {
         Text("\(space.index)")
             .skFont(.caption, weight: .bold, monospacedDigit: true)
-            .foregroundStyle(isCurrent ? Color.white : Color.primary)
+            .foregroundStyle(badgeText)
             .frame(minWidth: 24 * scale, minHeight: 24 * scale)
-            .background(Circle().fill(isCurrent ? Color.accentColor : Color.primary.opacity(0.12)))
-            .overlay { if isCurrent { Circle().strokeBorder(Color.primary, lineWidth: 1.5) } }
+            .background(Circle().fill(badgeFill))
+            .overlay { if isCurrent { Circle().strokeBorder(foreground, lineWidth: 1.5) } }
+    }
+
+    // On a coloured tile the badge uses the tile's text colour, so it keeps
+    // the same strong contrast: current = solid circle with the number cut out.
+    private var badgeFill: Color {
+        if tileColor != nil { return isCurrent ? foreground : foreground.opacity(0.15) }
+        return isCurrent ? Color.accentColor : Color.primary.opacity(0.12)
+    }
+
+    private var badgeText: Color {
+        if let tileColor, isCurrent { return tileColor.usesDarkText ? .white : .black }
+        return isCurrent ? Color.white : foreground
     }
 
     private var fill: Color {
+        if let tileColor {
+            let (r, g, b) = tileColor.rgb
+            let base = Color(red: r / 255, green: g / 255, blue: b / 255)
+            return isHovering ? base.mix(with: tileColor.usesDarkText ? .black : .white, by: 0.12) : base
+        }
         if isCurrent { return Color.accentColor.opacity(0.22) }
         return Color.primary.opacity(isHovering ? 0.12 : 0.06)
     }
@@ -743,6 +776,9 @@ private struct DesktopTile: View {
     private var borderColor: Color {
         if isFocused { return Color.primary }
         if isCurrent { return Color.accentColor }
+        // Coloured tiles get a visible edge with Increase Contrast, so their
+        // shape stands out against the panel too.
+        if tileColor != nil { return contrast == .increased ? Color.primary : Color.primary.opacity(0.25) }
         return Color.primary.opacity(0.2)
     }
 
@@ -825,6 +861,18 @@ private struct DesktopTile: View {
             .disabled(!isDesktop)
         Button(isPinned ? "Unpin" : "Pin") { model.togglePin(space) }
             .disabled(!isDesktop)
+        if isDesktop {
+            // Each colour is listed with its symbol and name.
+            Picker("Colour", selection: Binding(
+                get: { model.color(for: space) },
+                set: { model.setColor($0, for: space) }
+            )) {
+                Text("None").tag(DesktopColor?.none)
+                ForEach(DesktopColor.allCases) { color in
+                    Label(color.name, systemImage: color.symbol).tag(DesktopColor?.some(color))
+                }
+            }
+        }
         Divider()
         Button("Move Earlier") { move(by: -1) }
             .disabled(!model.canMove(space, by: -1))
@@ -840,6 +888,8 @@ private struct DesktopTile: View {
         if isDesktop {
             Button("Rename") { model.startRenaming(space) }
             Button(isPinned ? "Unpin" : "Pin") { model.togglePin(space) }
+            // Steps through the colours, announcing each one ("Navy", "no colour"…).
+            Button("Change colour") { model.cycleColor(for: space) }
         }
         if model.canMove(space, by: -1) { Button("Move earlier") { move(by: -1) } }
         if model.canMove(space, by: 1) { Button("Move later") { move(by: 1) } }
@@ -852,6 +902,7 @@ private struct DesktopTile: View {
         if !isDesktop { parts.append("full-screen app") }
         if isCurrent { parts.append("current") }
         if isPinned { parts.append("pinned") }
+        if let tileColor { parts.append("colour \(tileColor.name)") }
         if isOutOfOrder { parts.append("out of pinned order") }
         return parts.joined(separator: ", ")
     }

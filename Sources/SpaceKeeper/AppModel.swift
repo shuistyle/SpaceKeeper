@@ -208,6 +208,29 @@ final class AppModel {
 
     func alert(for space: SpaceInfo) -> PinAlert? { pinAlerts.first { $0.key == space.key } }
 
+    // --- COLOURS -------------------------------------------------------------
+    // An optional tile colour per desktop (DesktopColor in Models.swift).
+
+    func color(for space: SpaceInfo) -> DesktopColor? { configs[space.key]?.color }
+
+    /// Sets (or, with nil, removes) a desktop's colour, and tells VoiceOver.
+    func setColor(_ color: DesktopColor?, for space: SpaceInfo) {
+        guard space.kind == .desktop else { return }
+        updateConfig(space.key) { $0.color = color }
+        A11y.announce("\(displayName(for: space)): \(color?.name ?? "no colour")")
+    }
+
+    /// Next colour in the list (then "none", then the first again) — used by
+    /// the VoiceOver "Change colour" action.
+    func cycleColor(for space: SpaceInfo) {
+        let all = DesktopColor.allCases
+        let next: DesktopColor? = switch color(for: space) {
+        case nil: all.first
+        case let current?: all.firstIndex(of: current).flatMap { $0 + 1 < all.count ? all[$0 + 1] : nil }
+        }
+        setColor(next, for: space)
+    }
+
     func togglePin(_ space: SpaceInfo) {
         guard space.kind == .desktop else { return }
         if isPinned(space) {

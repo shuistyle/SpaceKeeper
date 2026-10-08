@@ -7,6 +7,7 @@ A menu bar utility for macOS 26+ (tested target: macOS 27) that lets you **name 
 | Feature | How it works |
 |---|---|
 | **See all desktops at once** | Click the menu bar icon (or double-tap Control): your desktops appear as tiles centred at the top of the screen, like Mission Control's strip. Up to 16 desktops fit as 2 rows of 8 (4 columns at the larger text sizes), so there's no scrolling. Click a tile to jump; drag tiles to reorder. |
+| **Colour-code desktops** | Right-click a tile › **Colour** to fill it with one of ten colours chosen for low vision and colour blindness: every colour keeps its text at 7:1 contrast or better (WCAG AAA), and each has its own symbol (circle, square, triangle…) and name, so colour is never the only clue. VoiceOver users can use the tile's **Change colour** action. |
 | **Name each desktop** | Double-click a tile (or right-click › Rename, or ⌘R) and type a name. Names are tied to the Space's internal UUID, so they survive reboots and reordering. |
 | **Current name in the menu bar** | The menu bar shows the name of the Space you're on. |
 | **Switch HUD** | A Liquid Glass banner shows the name each time you change Space. |

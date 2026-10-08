@@ -128,9 +128,18 @@ nonisolated struct SpacePin: Codable, Hashable, Sendable {
 nonisolated struct SpaceConfig: Codable, Hashable, Sendable {
     var name: String = ""
     var pin: SpacePin?
+    /// The tile colour's ID (a DesktopColor raw value). Stored as text, so an
+    /// unknown value from a future version is simply ignored, not an error.
+    var colorID: String?
+
+    /// The desktop's colour, if you've chosen one.
+    var color: DesktopColor? {
+        get { colorID.flatMap(DesktopColor.init(rawValue:)) }
+        set { colorID = newValue?.rawValue }
+    }
 
     var isEmpty: Bool {
-        name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && pin == nil
+        name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && pin == nil && color == nil
     }
 
     /// Longest name allowed. Long enough for real names, short enough to fit
@@ -149,6 +158,80 @@ nonisolated struct SpaceConfig: Codable, Hashable, Sendable {
         })
         let collapsed = flattened.split(whereSeparator: \.isWhitespace).joined(separator: " ")
         return String(collapsed.prefix(maxNameLength))
+    }
+}
+
+// MARK: - Desktop colours
+
+// The colours you can give a desktop's tile. Chosen for people with low
+// vision and colour blindness:
+//   • Every colour's text (black or white) has a contrast ratio of at least
+//     7:1 — the strictest WCAG level (AAA) — so names stay easy to read.
+//   • Five light and five dark colours, based on the Okabe–Ito palette that
+//     stays distinguishable with the common kinds of colour blindness.
+//   • Each colour also has its own SYMBOL (circle, square, triangle…) shown on
+//     the tile, and a NAME read by VoiceOver — never colour alone.
+// Contrast (text on fill): Yellow 15.9, Orange 9.3, Sky blue 9.1, Mint 10.2,
+// Pink 8.8, Navy 7.4, Plum 7.0, Forest 7.8, Brick 7.8, Slate 9.0.
+nonisolated enum DesktopColor: String, CaseIterable, Identifiable, Sendable {
+    case yellow, orange, skyBlue, mint, pink, navy, plum, forest, brick, slate
+
+    var id: String { rawValue }
+
+    var name: String {
+        switch self {
+        case .yellow: "Yellow"
+        case .orange: "Orange"
+        case .skyBlue: "Sky blue"
+        case .mint: "Mint"
+        case .pink: "Pink"
+        case .navy: "Navy"
+        case .plum: "Plum"
+        case .forest: "Forest"
+        case .brick: "Brick"
+        case .slate: "Slate"
+        }
+    }
+
+    /// The fill, as red/green/blue from 0 to 255.
+    var rgb: (red: Double, green: Double, blue: Double) {
+        switch self {
+        case .yellow: (0xF0, 0xE4, 0x42)
+        case .orange: (0xE6, 0x9F, 0x00)
+        case .skyBlue: (0x56, 0xB4, 0xE9)
+        case .mint: (0x4C, 0xC9, 0xA0)
+        case .pink: (0xE0, 0x8F, 0xBE)
+        case .navy: (0x00, 0x5A, 0x8C)
+        case .plum: (0x8E, 0x3B, 0x6E)
+        case .forest: (0x00, 0x5E, 0x45)
+        case .brick: (0x8F, 0x36, 0x00)
+        case .slate: (0x3F, 0x4A, 0x55)
+        }
+    }
+
+    /// Light colours use black text; dark colours use white text.
+    var usesDarkText: Bool {
+        switch self {
+        case .yellow, .orange, .skyBlue, .mint, .pink: true
+        default: false
+        }
+    }
+
+    /// A different shape for each colour (SF Symbols), so tiles can be told
+    /// apart without seeing colour.
+    var symbol: String {
+        switch self {
+        case .yellow: "circle.fill"
+        case .orange: "square.fill"
+        case .skyBlue: "triangle.fill"
+        case .mint: "diamond.fill"
+        case .pink: "heart.fill"
+        case .navy: "star.fill"
+        case .plum: "hexagon.fill"
+        case .forest: "pentagon.fill"
+        case .brick: "shield.fill"
+        case .slate: "seal.fill"
+        }
     }
 }
 
