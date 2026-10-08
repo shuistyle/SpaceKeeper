@@ -644,6 +644,17 @@ final class AppModel {
     /// What happened on the last jump, for Diagnostics.
     private(set) var lastSwitchReport = "No switch tried yet"
 
+    /// Switches by opening Mission Control and pressing the desktop's thumbnail
+    /// (MissionControl.switchToDesktop). Returns true if the desktop changed.
+    private func switchViaMissionControl(_ space: SpaceInfo, startingSpace: UInt64) async -> Bool {
+        guard let displayIndex = snapshot.displays.firstIndex(where: { $0.id == space.displayID }) else { return false }
+        _ = await MissionControl.switchToDesktop(spaceKey: space.key, displayID: space.displayID,
+                                                 displayIndex: displayIndex, displayCount: snapshot.displays.count)
+        try? await Task.sleep(for: .milliseconds(700)) // Mission Control's closing animation
+        refresh()
+        return snapshot.activeSpaceID != startingSpace
+    }
+
     /// Apps known to turn macOS's desktop shortcuts off while they're in
     /// front (virtual machines and remote-desktop apps), by bundle ID prefix.
     /// Add to this list if another app turns out to do the same.
@@ -687,8 +698,11 @@ final class AppModel {
 
             switch SpaceSwitcher.switchTo(desktop: number) {
             case .failure(let error):
-                self.statusMessage = error.message
-                self.lastSwitchReport = "Desktop \(number): not attempted — \(error.message)"
+                // No usable shortcut (off, or beyond Desktop 16): go via Mission Control.
+                let moved = await self.switchViaMissionControl(space, startingSpace: startingSpace)
+                self.lastSwitchReport = "Desktop \(number): no shortcut (\(error.message)) → "
+                    + (moved ? "switched via Mission Control" : "Mission Control didn't switch either")
+                self.statusMessage = moved ? nil : error.message
             case .success(let shortcut):
                 // The switch animation takes about half a second.
                 try? await Task.sleep(for: .milliseconds(900))
@@ -704,13 +718,22 @@ final class AppModel {
                     self.refresh()
                     moved = self.snapshot.activeSpaceID != startingSpace
                 }
-                let outcome = moved ? "switched"
+                // Last resort, which doesn't depend on keyboard shortcuts at all:
+                // open Mission Control and press the desktop's thumbnail.
+                var viaMissionControl = false
+                if !moved {
+                    viaMissionControl = true
+                    moved = await self.switchViaMissionControl(space, startingSpace: startingSpace)
+                }
+                let outcome = viaMissionControl
+                    ? (moved ? "macOS ignored the shortcut, so switched via Mission Control" : "Mission Control didn't switch either")
+                    : moved ? "switched"
                     : mayRetry ? "macOS did not switch"
                     : "macOS did not switch (no retry: \(frontName) isn't an app known to block the shortcuts)"
                 self.lastSwitchReport = "Desktop \(number): pressed \(shortcut.symbol) while \(frontName) was in front"
                     + (retried ? ", then again with SpaceKeeper in front" : "") + " → \(outcome)"
                 self.statusMessage = moved ? nil
-                    : "SpaceKeeper pressed \(shortcut.symbol) but macOS didn't switch. Check that “Switch to Desktop \(number)” is ticked in Keyboard Shortcuts › Mission Control, and that pressing \(shortcut.symbol) yourself works."
+                    : "SpaceKeeper couldn't switch to Desktop \(number), either with \(shortcut.symbol) or through Mission Control. Copy the Diagnostics report and send it for help."
             }
         }
     }

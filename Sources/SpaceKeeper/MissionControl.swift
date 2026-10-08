@@ -36,7 +36,7 @@ enum MissionControl {
             case .dockNotFound: "Couldn't find the Dock."
             case .didNotOpen: "Mission Control didn't open in time. Try again."
             case .controlNotFound: "Couldn't find Mission Control's desktop controls. A macOS update may have changed them."
-            case .desktopsChanged: "Your desktops changed while SpaceKeeper was checking, so nothing was removed. Try again."
+            case .desktopsChanged: "Your desktops changed while SpaceKeeper was checking, so it didn't act. Try again."
             }
         }
     }
@@ -145,28 +145,55 @@ enum MissionControl {
     /// closing one.
     static func removeDesktop(spaceKey: String, displayID: String, displayIndex: Int, displayCount: Int) async -> Result<Void, Failure> {
         await withMissionControl { bar, _ in
-            // 1. Where is the desktop right now?
-            let live = SpaceReader.snapshot()
-            guard let display = live.displays.first(where: { $0.id == displayID }),
-                  let target = display.spaces.first(where: { $0.key == spaceKey }),
-                  target.kind == .desktop
-            else { return .failure(.desktopsChanged) }
-
-            // 2. Mission Control must show the same number of thumbnails as macOS reports.
-            guard let list = pick(bar.spaceLists, displayIndex, displayCount) else { return .failure(.controlNotFound) }
-            let buttons = children(of: list)
-            guard buttons.count == display.spaces.count,
-                  buttons.indices.contains(target.position)
-            else { return .failure(.desktopsChanged) }
-
-            // 3. The thumbnail in that place must carry the desktop's number.
-            let button = buttons[target.position]
-            guard labelNumber(of: button) == target.index else { return .failure(.desktopsChanged) }
-
-            guard actions(of: button).contains("AXRemoveDesktop") else { return .failure(.controlNotFound) }
-            return AXUIElementPerformAction(button, "AXRemoveDesktop" as CFString) == .success
-                ? .success(()) : .failure(.controlNotFound)
+            switch thumbnail(for: spaceKey, displayID: displayID, in: bar, displayIndex: displayIndex, displayCount: displayCount) {
+            case .failure(let failure):
+                return .failure(failure)
+            case .success(let button):
+                guard actions(of: button).contains("AXRemoveDesktop") else { return .failure(.controlNotFound) }
+                return AXUIElementPerformAction(button, "AXRemoveDesktop" as CFString) == .success
+                    ? .success(()) : .failure(.controlNotFound)
+            }
         }
+    }
+
+    /// Switches to a desktop WITHOUT keyboard shortcuts: opens Mission Control
+    /// and presses that desktop's thumbnail, as if you clicked it. Mission
+    /// Control then closes on the chosen desktop. Used when macOS ignores the
+    /// "Switch to Desktop N" shortcut (see AppModel.switchTo). Same safety
+    /// checks as removing: the thumbnail must be the right desktop.
+    static func switchToDesktop(spaceKey: String, displayID: String, displayIndex: Int, displayCount: Int) async -> Result<Void, Failure> {
+        await withMissionControl { bar, _ in
+            switch thumbnail(for: spaceKey, displayID: displayID, in: bar, displayIndex: displayIndex, displayCount: displayCount) {
+            case .failure(let failure):
+                return .failure(failure)
+            case .success(let button):
+                return AXUIElementPerformAction(button, kAXPressAction as CFString) == .success
+                    ? .success(()) : .failure(.controlNotFound)
+            }
+        }
+    }
+
+    /// Finds a desktop's thumbnail in Mission Control, checking it really is
+    /// that desktop (Mission Control must be open, so nothing can move):
+    ///   1. re-read where the desktop is right now,
+    ///   2. Mission Control must show as many thumbnails as macOS reports,
+    ///   3. the thumbnail in that place must carry the desktop's number ("Desktop 3").
+    private static func thumbnail(for spaceKey: String, displayID: String, in bar: SpacesBar,
+                                  displayIndex: Int, displayCount: Int) -> Result<AXUIElement, Failure> {
+        let live = SpaceReader.snapshot()
+        guard let display = live.displays.first(where: { $0.id == displayID }),
+              let target = display.spaces.first(where: { $0.key == spaceKey }),
+              target.kind == .desktop
+        else { return .failure(.desktopsChanged) }
+
+        guard let list = pick(bar.spaceLists, displayIndex, displayCount) else { return .failure(.controlNotFound) }
+        let buttons = children(of: list)
+        guard buttons.count == display.spaces.count, buttons.indices.contains(target.position)
+        else { return .failure(.desktopsChanged) }
+
+        let button = buttons[target.position]
+        guard labelNumber(of: button) == target.index else { return .failure(.desktopsChanged) }
+        return .success(button)
     }
 
     /// The number at the end of a thumbnail's label: "Desktop 3" → 3. Works in
