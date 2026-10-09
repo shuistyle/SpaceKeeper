@@ -172,7 +172,7 @@ nonisolated struct SpaceConfig: Codable, Hashable, Sendable {
 //   • Each colour also has its own SYMBOL (circle, square, triangle…) shown on
 //     the tile, and a NAME read by VoiceOver — never colour alone.
 // Contrast (text on fill): Yellow 15.9, Orange 9.3, Sky blue 9.1, Mint 10.2,
-// Pink 8.8, Navy 7.4, Plum 7.0, Forest 7.8, Brick 7.8, Slate 9.0.
+// Pink 8.8, Navy 7.4, Plum 7.3, Forest 7.8, Brick 7.8, Slate 9.0.
 nonisolated enum DesktopColor: String, CaseIterable, Identifiable, Sendable {
     case yellow, orange, skyBlue, mint, pink, navy, plum, forest, brick, slate
 
@@ -202,7 +202,7 @@ nonisolated enum DesktopColor: String, CaseIterable, Identifiable, Sendable {
         case .mint: (0x4C, 0xC9, 0xA0)
         case .pink: (0xE0, 0x8F, 0xBE)
         case .navy: (0x00, 0x5A, 0x8C)
-        case .plum: (0x8E, 0x3B, 0x6E)
+        case .plum: (0x8A, 0x39, 0x6B)
         case .forest: (0x00, 0x5E, 0x45)
         case .brick: (0x8F, 0x36, 0x00)
         case .slate: (0x3F, 0x4A, 0x55)
