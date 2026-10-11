@@ -107,6 +107,22 @@ enum SpaceReader {
         return screen(forDisplayID: id)?.localizedName ?? "Display"
     }
 
+    /// For Diagnostics: the raw kind of every Space, in Mission Control's
+    /// order (0 = desktop, 4 = full-screen app). Numbers only.
+    static func typeSummary() -> String {
+        guard let array = CGSCopyManagedDisplaySpaces(CGSMainConnectionID()),
+              let rawDisplays = (array as NSArray) as? [[String: Any]]
+        else { return "unavailable" }
+        let active = CGSGetActiveSpace(CGSMainConnectionID())
+        return rawDisplays.map { display in
+            (display["Spaces"] as? [[String: Any]] ?? []).map { raw -> String in
+                let id = number(raw["ManagedSpaceID"]) ?? number(raw["id64"]) ?? 0
+                let type = number(raw["type"]).map(String.init) ?? "?"
+                return id == active ? "[\(type)]" : type
+            }.joined(separator: " ")
+        }.joined(separator: " | ")
+    }
+
     // MARK: Helpers
 
     private static func number(_ value: Any?) -> UInt64? {

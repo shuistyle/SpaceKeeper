@@ -407,7 +407,16 @@ final class AppModel {
     /// second click can turn the action into "rename" instead.
     func jump(to space: SpaceInfo, waitForDoubleClick: Bool = false) {
         pendingJump?.cancel()
-        guard canSwitch(to: space), space.managedID != snapshot.activeSpaceID else { return }
+        // Record why a click did nothing, for Diagnostics.
+        guard canSwitch(to: space) else {
+            lastSwitchReport = "\(space.defaultName) clicked: ignored (no shortcut number and not full screen)"
+            return
+        }
+        guard space.managedID != snapshot.activeSpaceID else {
+            lastSwitchReport = "\(space.defaultName) clicked: ignored (already there)"
+            return
+        }
+        lastSwitchReport = "\(space.defaultName) (\(space.kind == .fullScreen ? "full screen" : "desktop")) clicked"
         pendingJump = Task { [weak self] in
             if waitForDoubleClick {
                 try? await Task.sleep(for: .seconds(NSEvent.doubleClickInterval))
@@ -841,6 +850,7 @@ final class AppModel {
         Add desktop: \(MissionControl.lastAddReport)
         Mission Control thumbnail: \(MissionControl.lastThumbnailReport)
         Full-screen Spaces: \(fullScreenSummary)
+        Space kinds (0 desktop, 4 full screen, [current]): \(SpaceReader.typeSummary())
         """
     }
 
