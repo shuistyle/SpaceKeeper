@@ -670,12 +670,12 @@ private struct DesktopTile: View {
             } isTargeted: { isDropTarget = $0 && isDesktop }
             .help(isDesktop
                   ? "\(name) — click to jump, double-click to rename, drag to reorder, right-click to choose a colour"
-                  : "\(name) — a full-screen app")
+                  : "\(name) — a full-screen app. Click to go to it.")
             // VoiceOver: one button per tile, with the other actions in its Actions menu.
             .accessibilityElement(children: (isRenaming || isConfirmingRemove) ? .contain : .ignore)
             .accessibilityLabel(summary)
             .accessibilityAddTraits(isCurrent ? [.isButton, .isSelected] : .isButton)
-            .accessibilityHint(isDesktop ? "Jumps to this desktop. More actions are in the Actions menu." : "")
+            .accessibilityHint(isDesktop ? "Jumps to this desktop. More actions are in the Actions menu." : "Goes to this full-screen app.")
             .accessibilityAction { model.jump(to: space) }
             .accessibilityActions { accessibilityActionItems }
     }

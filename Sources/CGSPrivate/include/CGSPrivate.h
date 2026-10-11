@@ -32,6 +32,11 @@ extern CGSConnectionID CGSMainConnectionID(void);
 extern CGSSpaceID CGSGetActiveSpace(CGSConnectionID cid);
 extern CFArrayRef _Nullable CGSCopyManagedDisplaySpaces(CGSConnectionID cid) CF_RETURNS_RETAINED;
 
+// Read-only: which Spaces each of the given windows (an array of window-number
+// NSNumbers) is on. mask 7 = every kind of Space. Used by FullScreenSwitcher to
+// find the app that fills a full-screen Space. Used by many shipping utilities.
+extern CFArrayRef _Nullable CGSCopySpacesForWindows(CGSConnectionID cid, int mask, CFArrayRef windowIDs) CF_RETURNS_RETAINED;
+
 // Public-API helper: the UUID string for a CGDirectDisplayID. This matches the
 // "Display Identifier" value in the Spaces data, so we can map Spaces to NSScreens.
 CFStringRef _Nullable SKCopyDisplayUUIDString(uint32_t displayID) CF_RETURNS_RETAINED;

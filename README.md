@@ -79,7 +79,7 @@ SpaceKeeper is built to work with macOS's accessibility features:
 
 - If desktop labels appear on every Space instead of just one, set **Layer** to *Above windows*.
 - A label is created the first time you visit each desktop after launch. Visit each Space once and they'll all be tagged, including in Mission Control's thumbnails.
-- Full-screen app Spaces are listed but can't be renamed or pinned, because macOS gives them a new identity each time.
+- Full-screen app Spaces (a Parallels Desktop virtual machine, a full-screen video…) are listed, and clicking one goes straight to it, however many desktops you have. They can't be renamed or pinned, because macOS gives them a new identity each time.
 
 ## Reading the code
 

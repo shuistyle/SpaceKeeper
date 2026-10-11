@@ -638,7 +638,7 @@ final class AppModel {
     // MARK: Switching
 
     func canSwitch(to space: SpaceInfo) -> Bool {
-        space.desktopNumber != nil
+        space.desktopNumber != nil || space.kind == .fullScreen
     }
 
     /// What happened on the last jump, for Diagnostics.
@@ -677,7 +677,51 @@ final class AppModel {
         return shortcutBlockingApps.contains { bundleID.hasPrefix($0) }
     }
 
+    /// Goes to a full-screen app's own Space (a Parallels Desktop virtual
+    /// machine, a full-screen video…). These Spaces have no "Switch to Desktop"
+    /// shortcut, so: bring the app's full-screen window to the front, which
+    /// makes macOS slide to it (FullScreenSwitcher). If that doesn't move us
+    /// there, press its thumbnail in Mission Control. Works however many
+    /// desktops you have.
+    private func switchToFullScreen(_ space: SpaceInfo) {
+        if !SpaceSwitcher.isTrusted { SpaceSwitcher.requestTrust() }
+        let startingSpace = snapshot.activeSpaceID
+        let name = displayName(for: space)
+        Task { [weak self] in
+            // Give the menu bar panel a moment to close first.
+            try? await Task.sleep(for: .milliseconds(200))
+            guard let self else { return }
+            var steps: [String] = []
+            var arrived = false
+
+            if let owner = FullScreenSwitcher.owner(ofSpace: space.managedID) {
+                let raised = FullScreenSwitcher.bringForward(owner)
+                steps.append("brought \(owner.appName) forward" + (raised ? "" : " (window not raised)"))
+                // Wait for the slide animation (up to ~1.5 s).
+                for _ in 0..<6 {
+                    try? await Task.sleep(for: .milliseconds(250))
+                    self.refresh()
+                    if self.snapshot.activeSpaceID == space.managedID { arrived = true; break }
+                }
+                if !arrived { steps.append("macOS stayed put") }
+            } else {
+                steps.append("couldn't find the app's window")
+            }
+
+            if !arrived {
+                let moved = await self.switchViaMissionControl(space, startingSpace: startingSpace)
+                arrived = moved && self.snapshot.activeSpaceID == space.managedID
+                steps.append(arrived ? "switched via Mission Control" : "Mission Control didn't switch either")
+            }
+
+            self.lastSwitchReport = "\(space.defaultName): " + steps.joined(separator: " → ")
+            self.statusMessage = arrived ? nil
+                : "SpaceKeeper couldn't go to “\(name)”. Copy the Diagnostics report and send it for help."
+        }
+    }
+
     func switchTo(_ space: SpaceInfo) {
+        if space.kind == .fullScreen { switchToFullScreen(space); return }
         guard let number = space.desktopNumber else { return }
         if !SpaceSwitcher.isTrusted { SpaceSwitcher.requestTrust() }
         let startingSpace = snapshot.activeSpaceID

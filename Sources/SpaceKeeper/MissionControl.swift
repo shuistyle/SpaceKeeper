@@ -161,9 +161,11 @@ enum MissionControl {
     /// Control then closes on the chosen desktop. Used when macOS ignores the
     /// "Switch to Desktop N" shortcut (see AppModel.switchTo). Same safety
     /// checks as removing: the thumbnail must be the right desktop.
+    /// Also works for a full-screen app's Space (allowFullScreen).
     static func switchToDesktop(spaceKey: String, displayID: String, displayIndex: Int, displayCount: Int) async -> Result<Void, Failure> {
         await withMissionControl { bar, _ in
-            switch thumbnail(for: spaceKey, displayID: displayID, in: bar, displayIndex: displayIndex, displayCount: displayCount) {
+            switch thumbnail(for: spaceKey, displayID: displayID, in: bar, displayIndex: displayIndex,
+                             displayCount: displayCount, allowFullScreen: true) {
             case .failure(let failure):
                 return .failure(failure)
             case .success(let button):
@@ -178,12 +180,16 @@ enum MissionControl {
     ///   1. re-read where the desktop is right now,
     ///   2. Mission Control must show as many thumbnails as macOS reports,
     ///   3. the thumbnail in that place must carry the desktop's number ("Desktop 3").
+    /// With allowFullScreen (switching only, never removing), a full-screen
+    /// app's Space is accepted too. Its thumbnail is labelled with the app or
+    /// window name rather than a number, so steps 1 and 2 are the check.
     private static func thumbnail(for spaceKey: String, displayID: String, in bar: SpacesBar,
-                                  displayIndex: Int, displayCount: Int) -> Result<AXUIElement, Failure> {
+                                  displayIndex: Int, displayCount: Int,
+                                  allowFullScreen: Bool = false) -> Result<AXUIElement, Failure> {
         let live = SpaceReader.snapshot()
         guard let display = live.displays.first(where: { $0.id == displayID }),
               let target = display.spaces.first(where: { $0.key == spaceKey }),
-              target.kind == .desktop
+              target.kind == .desktop || (allowFullScreen && target.kind == .fullScreen)
         else { return .failure(.desktopsChanged) }
 
         guard let list = pick(bar.spaceLists, displayIndex, displayCount) else { return .failure(.controlNotFound) }
@@ -192,7 +198,9 @@ enum MissionControl {
         else { return .failure(.desktopsChanged) }
 
         let button = buttons[target.position]
-        guard labelNumber(of: button) == target.index else { return .failure(.desktopsChanged) }
+        if target.kind == .desktop {
+            guard labelNumber(of: button) == target.index else { return .failure(.desktopsChanged) }
+        }
         return .success(button)
     }
 
