@@ -3,6 +3,10 @@
 #   ./build.sh            → build/SpaceKeeper.app
 #   ./build.sh --install  → also copies it to ~/Applications and launches it
 #
+# make_release.sh also sets two options:
+#   APP_VERSION=1.2.0   → the version shown in Finder's Get Info and About
+#   UNIVERSAL=1         → one app that runs on both Apple silicon and Intel Macs
+#
 # SIGNING — why it matters
 # macOS ties SpaceKeeper's Accessibility permission (which lets it watch the
 # keyboard and press keys) to the certificate the app is signed with. Anyone
@@ -128,14 +132,35 @@ prepare_signing() {
 }
 
 echo "▸ Building (release)…"
-swift build -c release
-BIN_DIR="$(swift build -c release --show-bin-path)"
+if [[ "${UNIVERSAL:-0}" == 1 ]]; then
+  # Build for each kind of Mac processor, then join the two into one program.
+  swift build -c release --arch arm64
+  swift build -c release --arch x86_64
+  ARM_BIN="$(swift build -c release --arch arm64 --show-bin-path)/$APP_NAME"
+  INTEL_BIN="$(swift build -c release --arch x86_64 --show-bin-path)/$APP_NAME"
+  BINARY="build/${APP_NAME}-universal"
+  mkdir -p build
+  lipo -create "$ARM_BIN" "$INTEL_BIN" -output "$BINARY"
+  echo "  Runs on: $(lipo -archs "$BINARY")"
+else
+  swift build -c release
+  BINARY="$(swift build -c release --show-bin-path)/$APP_NAME"
+fi
 
 echo "▸ Assembling ${APP}…"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-cp "$BIN_DIR/$APP_NAME" "$APP/Contents/MacOS/$APP_NAME"
+cp "$BINARY" "$APP/Contents/MacOS/$APP_NAME"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
+cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
+if [[ -n "${APP_VERSION:-}" ]]; then
+  if [[ ! "$APP_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    echo "✗ APP_VERSION must look like 1.2.0 (got “${APP_VERSION}”)."; exit 1
+  fi
+  /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${APP_VERSION}" "$APP/Contents/Info.plist"
+  # The build number must always go up: use the number of commits so far.
+  /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $(git rev-list --count HEAD 2>/dev/null || echo 1)" "$APP/Contents/Info.plist"
+fi
 
 prepare_signing
 echo "▸ Signing with ${IDENTITY}…"

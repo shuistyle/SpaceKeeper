@@ -373,18 +373,21 @@
   <section id="install" aria-labelledby="install-title">
     <div class="wrap">
       <h2 id="install-title">Install</h2>
-      <p class="section-lede">SpaceKeeper is built from source in a minute. You'll need macOS 26 or later and Apple's free Xcode, version 26 or later.</p>
+      <p class="section-lede">Needs macOS 26 or later. Works on Apple silicon and Intel Macs. Free, with nothing to sign up for.</p>
+      <p><a class="btn btn-primary" href="https://github.com/shuistyle/SpaceKeeper/releases/latest">Download SpaceKeeper for Mac</a></p>
       <ol class="steps">
         <li>
-          <h3>Download and build</h3>
-          <p>Open Terminal and run:</p>
-<pre><code><span class="c"># Download the code</span>
-git clone <span class="repo-git">https://github.com/OWNER/SpaceKeeper.git</span>
-cd SpaceKeeper
-
-<span class="c"># Build, sign and install to ~/Applications, then launch</span>
-bash build.sh --install</code></pre>
-          <p>The first build creates a local signing certificate, so macOS remembers SpaceKeeper's permissions between updates. If asked, enter your Mac password and choose <strong>Always Allow</strong>.</p>
+          <h3>Download and copy it to Applications</h3>
+          <p>On the download page, click <strong>SpaceKeeper-<em>version</em>.dmg</strong>. Open it from your Downloads folder, then drag the <strong>SpaceKeeper</strong> icon onto the <strong>Applications</strong> folder in the window that appears.</p>
+        </li>
+        <li>
+          <h3>Open it the first time</h3>
+          <p>Double-click SpaceKeeper in Applications. macOS says <strong>“SpaceKeeper” Not Opened</strong>: click <strong>Done</strong>. Then open <strong>System Settings › Privacy &amp; Security</strong>, scroll down to <strong>Security</strong>, and click <strong>Open Anyway</strong> next to “SpaceKeeper was blocked”. Enter your Mac password and click <strong>Open Anyway</strong> again.</p>
+          <p>You only do this once. The DMG includes an illustrated guide, <strong>First time opening SpaceKeeper</strong>, with the same steps.</p>
+          <details>
+            <summary>Why does macOS ask?</summary>
+            <p>SpaceKeeper is free and isn't registered with Apple's paid developer programme, so macOS can't check it for you. All of its code is public on GitHub. Only download it from the official GitHub page.</p>
+          </details>
         </li>
         <li>
           <h3>Lock the order</h3>
@@ -396,9 +399,17 @@ bash build.sh --install</code></pre>
         </li>
         <li>
           <h3>Name and pin</h3>
-          <p>Type names for your desktops, pin the important ones, and drag the list into the order you like. Press <kbd>⌃⌥S</kbd> any time to come back.</p>
+          <p>Type names for your desktops, pin the important ones, and drag the list into the order you like. Double-tap <kbd>control</kbd> (or press <kbd>⌃⌥S</kbd>) any time to come back.</p>
         </li>
       </ol>
+      <details>
+        <summary>Prefer to build it yourself?</summary>
+        <p>You'll need Apple's free Xcode 26 or later (or its Command Line Tools). In Terminal:</p>
+<pre><code>git clone <span class="repo-git">https://github.com/shuistyle/SpaceKeeper.git</span>
+cd SpaceKeeper
+bash build.sh --install</code></pre>
+        <p>The first build creates a local signing certificate in its own password-protected keychain, so macOS remembers SpaceKeeper's permissions between updates.</p>
+      </details>
     </div>
   </section>
 
