@@ -44,6 +44,15 @@ CFStringRef _Nullable SKCopyDisplayUUIDString(uint32_t displayID) CF_RETURNS_RET
 // Symbolic hotkeys (the system keyboard shortcuts, e.g. "Switch to Desktop N",
 // IDs 118…133). Reading and changing them is what System Settings does; the
 // change applies immediately. Wrapped so the private calls' types stay in C.
+// Brings one specific window (and its app) to the front, even when the
+// window is on another Space: macOS then slides to that Space. This is how
+// window switchers such as AltTab focus windows. It changes only which window
+// is in front, nothing else. Used by FullScreenSwitcher for full-screen apps.
+// Returns 0 on success, otherwise a step number for the Diagnostics report:
+// 1 window server unavailable, 2 a function is missing, 3 app not found,
+// 4 window server refused.
+int SKFocusWindow(int32_t pid, uint32_t windowID);
+
 bool SKIsSymbolicHotKeyEnabled(uint32_t hotKey);
 bool SKGetSymbolicHotKey(uint32_t hotKey, uint16_t *character, uint16_t *keyCode, uint64_t *modifiers);
 bool SKSetSymbolicHotKey(uint32_t hotKey, uint16_t character, uint16_t keyCode, uint64_t modifiers, bool enabled);

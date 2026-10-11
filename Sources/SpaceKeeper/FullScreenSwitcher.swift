@@ -11,10 +11,11 @@
 //      (public) lists every window and the app that owns it;
 //      CGSCopySpacesForWindows (private, read-only) says which Space each
 //      window is on.
-//   2. Mark that window as the app's main window and raise it (the same
-//      Accessibility actions a screen reader uses).
-//   3. Make the app the active app. macOS then slides to the Space holding
-//      its main window: the full-screen one.
+//   2. Bring exactly that window to the front with SKFocusWindow
+//      (CGSPrivate.c), the way window switchers like AltTab do. macOS then
+//      slides to the Space holding it: the full-screen one.
+//   3. If macOS stays put: mark the window as the app's main window, raise
+//      it (Accessibility) and ask the app to become the active app.
 //
 // AppModel.switchToFullScreen() checks the switch really happened and, if
 // not, falls back to pressing the Space's thumbnail in Mission Control.
@@ -36,7 +37,8 @@ enum FullScreenSwitcher {
     /// The app filling a full-screen Space, and its window(s) there.
     struct Owner {
         let pid: pid_t
-        let windowIDs: Set<CGWindowID>
+        /// Its windows on that Space, largest first (the full-screen window itself).
+        let windowIDs: [CGWindowID]
         var appName: String {
             NSRunningApplication(processIdentifier: pid)?.localizedName ?? "the app"
         }
@@ -49,7 +51,7 @@ enum FullScreenSwitcher {
         else { return nil }
         let connection = CGSMainConnectionID()
         let ownPID = ProcessInfo.processInfo.processIdentifier
-        var windowsByApp: [pid_t: Set<CGWindowID>] = [:]
+        var windowsByApp: [pid_t: [(id: CGWindowID, area: Double)]] = [:]
 
         for window in list {
             // Layer 0 = ordinary app windows (not menus, the Dock or overlays).
@@ -63,35 +65,54 @@ enum FullScreenSwitcher {
                   let spaceIDs = (spaces as NSArray) as? [NSNumber],
                   spaceIDs.contains(where: { $0.uint64Value == spaceID })
             else { continue }
-            windowsByApp[pid, default: []].insert(number)
+            var bounds = CGRect.zero
+            if let dict = window[kCGWindowBounds as String] as? NSDictionary {
+                bounds = CGRect(dictionaryRepresentation: dict as CFDictionary) ?? .zero
+            }
+            windowsByApp[pid, default: []].append((number, Double(bounds.width * bounds.height)))
         }
-        // Normally exactly one app. If several, take the one with most windows there.
-        guard let best = windowsByApp.max(by: { $0.value.count < $1.value.count }) else { return nil }
-        return Owner(pid: best.key, windowIDs: best.value)
+        // Normally exactly one app: the one with the biggest window there.
+        guard let best = windowsByApp.max(by: {
+            ($0.value.map(\.area).max() ?? 0) < ($1.value.map(\.area).max() ?? 0)
+        }) else { return nil }
+        let ordered = best.value.sorted { $0.area > $1.area }.map(\.id)
+        return Owner(pid: best.key, windowIDs: ordered)
     }
 
-    /// Raises the full-screen window and activates its app. Returns whether
-    /// the exact window was found and raised (the app is activated either way).
+    /// Brings the full-screen window itself to the front (SKFocusWindow), then
+    /// raises it. Returns 0 if the window server accepted it, otherwise the
+    /// failing step's number (see CGSPrivate.h), for Diagnostics.
+    static func focusWindow(_ owner: Owner) -> Int {
+        guard let window = owner.windowIDs.first else { return -1 }
+        let result = Int(SKFocusWindow(owner.pid, window))
+        if result == 0 { _ = raiseWindow(owner) }
+        return result
+    }
+
+    /// Marks the window as its app's main window and raises it (Accessibility).
+    private static func raiseWindow(_ owner: Owner) -> Bool {
+        guard AXIsProcessTrusted() else { return false }
+        let axApp = AXUIElementCreateApplication(owner.pid)
+        AXUIElementSetMessagingTimeout(axApp, 1.0)
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &value) == .success,
+              let windows = value as? [AXUIElement] else { return false }
+        for window in windows {
+            var number: CGWindowID = 0
+            guard _AXUIElementGetWindow(window, &number) == .success,
+                  owner.windowIDs.contains(number) else { continue }
+            AXUIElementSetAttributeValue(window, kAXMainAttribute as CFString, kCFBooleanTrue)
+            return AXUIElementPerformAction(window, kAXRaiseAction as CFString) == .success
+        }
+        return false
+    }
+
+    /// Second way: raises the window and asks its app to become active.
+    /// Returns whether the exact window was found and raised.
     @discardableResult
     static func bringForward(_ owner: Owner) -> Bool {
         guard let app = NSRunningApplication(processIdentifier: owner.pid) else { return false }
-        var raised = false
-        if AXIsProcessTrusted() {
-            let axApp = AXUIElementCreateApplication(owner.pid)
-            AXUIElementSetMessagingTimeout(axApp, 1.0)
-            var value: CFTypeRef?
-            if AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &value) == .success,
-               let windows = value as? [AXUIElement] {
-                for window in windows {
-                    var number: CGWindowID = 0
-                    guard _AXUIElementGetWindow(window, &number) == .success,
-                          owner.windowIDs.contains(number) else { continue }
-                    AXUIElementSetAttributeValue(window, kAXMainAttribute as CFString, kCFBooleanTrue)
-                    raised = AXUIElementPerformAction(window, kAXRaiseAction as CFString) == .success
-                    break
-                }
-            }
-        }
+        let raised = raiseWindow(owner)
         // Not .activateAllWindows: that could pull the app's other windows
         // (on ordinary desktops) forward instead.
         // macOS 14+ "cooperative activation": the app in front (SpaceKeeper,

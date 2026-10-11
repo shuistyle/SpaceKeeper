@@ -687,35 +687,57 @@ final class AppModel {
         if !SpaceSwitcher.isTrusted { SpaceSwitcher.requestTrust() }
         let startingSpace = snapshot.activeSpaceID
         let name = displayName(for: space)
+        let label = space.defaultName
+        lastSwitchReport = "\(label): started"
         Task { [weak self] in
             // Give the menu bar panel a moment to close first.
             try? await Task.sleep(for: .milliseconds(200))
             guard let self else { return }
             var steps: [String] = []
-            var arrived = false
-
-            if let owner = FullScreenSwitcher.owner(ofSpace: space.managedID) {
-                let raised = FullScreenSwitcher.bringForward(owner)
-                steps.append("brought \(owner.appName) forward" + (raised ? "" : " (window not raised)"))
-                // Wait for the slide animation (up to ~1.5 s).
+            // Keep the Diagnostics line up to date after every step, so it's
+            // useful even if you copy the report while this is still going.
+            func note(_ step: String) {
+                steps.append(step)
+                self.lastSwitchReport = "\(label): " + steps.joined(separator: " → ")
+            }
+            // Waits up to ~1.5 s for macOS to finish sliding to the Space.
+            func arrived() async -> Bool {
                 for _ in 0..<6 {
                     try? await Task.sleep(for: .milliseconds(250))
                     self.refresh()
-                    if self.snapshot.activeSpaceID == space.managedID { arrived = true; break }
+                    if self.snapshot.activeSpaceID == space.managedID { return true }
                 }
-                if !arrived { steps.append("macOS stayed put") }
+                return false
+            }
+
+            var done = false
+            if let owner = FullScreenSwitcher.owner(ofSpace: space.managedID) {
+                note("found \(owner.appName) (\(owner.windowIDs.count) window\(owner.windowIDs.count == 1 ? "" : "s"))")
+                // 1. Bring that exact window to the front (as window switchers do).
+                let result = FullScreenSwitcher.focusWindow(owner)
+                if result == 0 { done = await arrived() }
+                note(result == 0 ? (done ? "focused its window" : "focused its window, but macOS stayed put")
+                                 : "couldn't focus its window (step \(result))")
+                // 2. Ask the app itself to come to the front.
+                if !done {
+                    let raised = FullScreenSwitcher.bringForward(owner)
+                    done = await arrived()
+                    note((done ? "activated the app" : "activated the app, but macOS stayed put")
+                         + (raised ? "" : " (window not raised)"))
+                }
             } else {
-                steps.append("couldn't find the app's window")
+                note("no window found on that Space")
             }
 
-            if !arrived {
+            // 3. Last resort: press its thumbnail in Mission Control.
+            if !done {
                 let moved = await self.switchViaMissionControl(space, startingSpace: startingSpace)
-                arrived = moved && self.snapshot.activeSpaceID == space.managedID
-                steps.append(arrived ? "switched via Mission Control" : "Mission Control didn't switch either")
+                done = moved && self.snapshot.activeSpaceID == space.managedID
+                note(done ? "switched via Mission Control"
+                          : "Mission Control didn't switch either (\(MissionControl.lastThumbnailReport))")
             }
 
-            self.lastSwitchReport = "\(space.defaultName): " + steps.joined(separator: " → ")
-            self.statusMessage = arrived ? nil
+            self.statusMessage = done ? nil
                 : "SpaceKeeper couldn't go to “\(name)”. Copy the Diagnostics report and send it for help."
         }
     }
@@ -817,7 +839,20 @@ final class AppModel {
         Open shortcut ⌃⌥S: \(openHotKey.status); pressed \(openHotKey.pressCount)×
         Quick panel: \(quickPanel?.lastResult ?? "not set up")
         Add desktop: \(MissionControl.lastAddReport)
+        Mission Control thumbnail: \(MissionControl.lastThumbnailReport)
+        Full-screen Spaces: \(fullScreenSummary)
         """
+    }
+
+    /// For Diagnostics: each full-screen Space and which app SpaceKeeper
+    /// thinks fills it (app names only, never window titles).
+    private var fullScreenSummary: String {
+        let spaces = snapshot.allSpaces.filter { $0.kind == .fullScreen }
+        guard !spaces.isEmpty else { return "none" }
+        return spaces.map { space in
+            let owner = FullScreenSwitcher.owner(ofSpace: space.managedID)
+            return "\(space.defaultName) → " + (owner.map { "\($0.appName), \($0.windowIDs.count) window(s)" } ?? "no window found")
+        }.joined(separator: "; ")
     }
 
     func requestAccessibility() {

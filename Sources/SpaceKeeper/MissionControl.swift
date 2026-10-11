@@ -47,6 +47,9 @@ enum MissionControl {
 
     static func noteAddStarted() { lastAddReport = "started…" }
 
+    /// What the last thumbnail search found — shown in Diagnostics.
+    private(set) static var lastThumbnailReport = "not tried"
+
     static func addDesktop(displayIndex: Int, displayCount: Int) async -> Result<Void, Failure> {
         await withMissionControl { bar, roots in
             var bar = bar
@@ -190,17 +193,26 @@ enum MissionControl {
         guard let display = live.displays.first(where: { $0.id == displayID }),
               let target = display.spaces.first(where: { $0.key == spaceKey }),
               target.kind == .desktop || (allowFullScreen && target.kind == .fullScreen)
-        else { return .failure(.desktopsChanged) }
+        else { lastThumbnailReport = "that Space no longer exists"; return .failure(.desktopsChanged) }
 
-        guard let list = pick(bar.spaceLists, displayIndex, displayCount) else { return .failure(.controlNotFound) }
+        guard let list = pick(bar.spaceLists, displayIndex, displayCount) else {
+            lastThumbnailReport = "no desktop strip"; return .failure(.controlNotFound)
+        }
         let buttons = children(of: list)
-        guard buttons.count == display.spaces.count, buttons.indices.contains(target.position)
-        else { return .failure(.desktopsChanged) }
+        let roles = Set(buttons.compactMap { string($0, kAXRoleAttribute) }).sorted().joined(separator: "/")
+        guard buttons.count == display.spaces.count, buttons.indices.contains(target.position) else {
+            lastThumbnailReport = "strip shows \(buttons.count) thumbnails (\(roles)), macOS reports \(display.spaces.count) Spaces"
+            return .failure(.desktopsChanged)
+        }
 
         let button = buttons[target.position]
         if target.kind == .desktop {
-            guard labelNumber(of: button) == target.index else { return .failure(.desktopsChanged) }
+            guard labelNumber(of: button) == target.index else {
+                lastThumbnailReport = "thumbnail \(target.position + 1) isn't Desktop \(target.index)"
+                return .failure(.desktopsChanged)
+            }
         }
+        lastThumbnailReport = "thumbnail \(target.position + 1) of \(buttons.count) (\(roles))"
         return .success(button)
     }
 
@@ -274,6 +286,7 @@ enum MissionControl {
         let result: Result<Void, Failure>
         if bar.spaceLists.isEmpty {
             lastAddReport = "Mission Control opened but its desktop strip wasn't recognised — click “Save Mission Control Map” in Diagnostics to help diagnose it"
+            lastThumbnailReport = "desktop strip not recognised"
             result = .failure(.didNotOpen)
         } else {
             // Let the opening animation settle so the controls respond.
