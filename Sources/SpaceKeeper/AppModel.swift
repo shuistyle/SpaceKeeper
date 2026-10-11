@@ -677,6 +677,22 @@ final class AppModel {
         return shortcutBlockingApps.contains { bundleID.hasPrefix($0) }
     }
 
+    /// Adds a step to the Diagnostics line for the switch in progress.
+    private func note(_ steps: inout [String], _ label: String, _ step: String) {
+        steps.append(step)
+        lastSwitchReport = "\(label): " + steps.joined(separator: " → ")
+    }
+
+    /// Waits up to ~1.5 s for macOS to finish sliding to the given Space.
+    private func waitUntilActive(_ spaceID: UInt64) async -> Bool {
+        for _ in 0..<6 {
+            try? await Task.sleep(for: .milliseconds(250))
+            refresh()
+            if snapshot.activeSpaceID == spaceID { return true }
+        }
+        return false
+    }
+
     /// Goes to a full-screen app's own Space (a Parallels Desktop virtual
     /// machine, a full-screen video…). These Spaces have no "Switch to Desktop"
     /// shortcut, so: bring the app's full-screen window to the front, which
@@ -694,46 +710,30 @@ final class AppModel {
             try? await Task.sleep(for: .milliseconds(200))
             guard let self else { return }
             var steps: [String] = []
-            // Keep the Diagnostics line up to date after every step, so it's
-            // useful even if you copy the report while this is still going.
-            func note(_ step: String) {
-                steps.append(step)
-                self.lastSwitchReport = "\(label): " + steps.joined(separator: " → ")
-            }
-            // Waits up to ~1.5 s for macOS to finish sliding to the Space.
-            func arrived() async -> Bool {
-                for _ in 0..<6 {
-                    try? await Task.sleep(for: .milliseconds(250))
-                    self.refresh()
-                    if self.snapshot.activeSpaceID == space.managedID { return true }
-                }
-                return false
-            }
-
             var done = false
             if let owner = FullScreenSwitcher.owner(ofSpace: space.managedID) {
-                note("found \(owner.appName) (\(owner.windowIDs.count) window\(owner.windowIDs.count == 1 ? "" : "s"))")
+                self.note(&steps, label, "found \(owner.appName) (\(owner.windowIDs.count) window\(owner.windowIDs.count == 1 ? "" : "s"))")
                 // 1. Bring that exact window to the front (as window switchers do).
                 let result = FullScreenSwitcher.focusWindow(owner)
-                if result == 0 { done = await arrived() }
-                note(result == 0 ? (done ? "focused its window" : "focused its window, but macOS stayed put")
+                if result == 0 { done = await self.waitUntilActive(space.managedID) }
+                self.note(&steps, label, result == 0 ? (done ? "focused its window" : "focused its window, but macOS stayed put")
                                  : "couldn't focus its window (step \(result))")
                 // 2. Ask the app itself to come to the front.
                 if !done {
                     let raised = FullScreenSwitcher.bringForward(owner)
-                    done = await arrived()
-                    note((done ? "activated the app" : "activated the app, but macOS stayed put")
+                    done = await self.waitUntilActive(space.managedID)
+                    self.note(&steps, label, (done ? "activated the app" : "activated the app, but macOS stayed put")
                          + (raised ? "" : " (window not raised)"))
                 }
             } else {
-                note("no window found on that Space")
+                self.note(&steps, label, "no window found on that Space")
             }
 
             // 3. Last resort: press its thumbnail in Mission Control.
             if !done {
                 let moved = await self.switchViaMissionControl(space, startingSpace: startingSpace)
                 done = moved && self.snapshot.activeSpaceID == space.managedID
-                note(done ? "switched via Mission Control"
+                self.note(&steps, label, done ? "switched via Mission Control"
                           : "Mission Control didn't switch either (\(MissionControl.lastThumbnailReport))")
             }
 
