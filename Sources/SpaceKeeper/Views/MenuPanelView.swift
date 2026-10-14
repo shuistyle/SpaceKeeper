@@ -715,7 +715,7 @@ private struct DesktopTile: View {
                     .onExitCommand { model.finishRenaming(space, newName: nil) }
                     .onAppear {
                         draftName = model.customName(for: space.key)
-                        nameFieldFocused = true
+                        focusNameField()
                     }
                     // Stop typing (or pasting) at the 60-character limit.
                     .onChange(of: draftName) { _, newValue in
@@ -802,6 +802,32 @@ private struct DesktopTile: View {
     }
 
     // MARK: Actions
+
+    /// Puts the typing cursor in the name box as soon as it appears, so you
+    /// can type straight away, and selects any existing name so typing
+    /// replaces it. A focus request made at the very moment the box appears
+    /// is often ignored, and the tile you clicked can take focus back, so
+    /// this keeps trying for about half a second until the box really has it.
+    private func focusNameField() {
+        Task { @MainActor in
+            for _ in 0..<12 {
+                guard isRenaming else { return }
+                // The panel must be the window receiving keystrokes.
+                if NSApp.keyWindow == nil,
+                   let panel = NSApp.windows.first(where: { $0.isVisible && $0.canBecomeKey }) {
+                    panel.makeKey()
+                }
+                nameFieldFocused = true
+                try? await Task.sleep(for: .milliseconds(40))
+                // Typing goes into a text field through its "field editor";
+                // once that's the first responder, the cursor is in the box.
+                if nameFieldFocused, NSApp.keyWindow?.firstResponder is NSText {
+                    NSApp.sendAction(#selector(NSText.selectAll(_:)), to: nil, from: nil)
+                    return
+                }
+            }
+        }
+    }
 
     private func handleClick() {
         guard !isRenaming, !isConfirmingRemove else { return }
