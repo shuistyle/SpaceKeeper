@@ -757,7 +757,7 @@ final class AppModel {
         if !SpaceSwitcher.isTrusted { SpaceSwitcher.requestTrust() }
         let startingSpace = snapshot.activeSpaceID
         Task { [weak self] in
-            // Give the menu bar panel a moment to close before pressing the shortcut.
+            // Give the menu bar panel a moment to close first.
             try? await Task.sleep(for: .milliseconds(200))
             guard let self else { return }
             // The app you were using. Some apps — Parallels Desktop, other virtual
@@ -771,16 +771,37 @@ final class AppModel {
             let frontName = frontApp?.localizedName ?? "unknown app"
             let mayRetry = Self.blocksDesktopShortcuts(frontApp)
 
+            // Hold the keyboard while pressing the shortcut, so a keystroke
+            // macOS ignores can't type a digit into the app you were using
+            // (KeystrokeCatcher, SystemBridges.swift). If the keyboard can't be
+            // held, don't press keys at all: use Mission Control instead.
+            let catcher = KeystrokeCatcher.shared
+            catcher.hold()
+            try? await Task.sleep(for: .milliseconds(60)) // let the window server route keys to it
+            guard catcher.isHolding else {
+                catcher.release()
+                let moved = await self.switchViaMissionControl(space, startingSpace: startingSpace)
+                self.lastSwitchReport = "Desktop \(number): couldn't hold the keyboard safely, so didn't press keys → "
+                    + (moved ? "switched via Mission Control" : "Mission Control didn't switch either")
+                self.statusMessage = moved ? nil : "SpaceKeeper couldn't switch to Desktop \(number). Try again."
+                return
+            }
+
             switch SpaceSwitcher.switchTo(desktop: number) {
             case .failure(let error):
+                catcher.release()
                 // No usable shortcut (off, or beyond Desktop 16): go via Mission Control.
                 let moved = await self.switchViaMissionControl(space, startingSpace: startingSpace)
                 self.lastSwitchReport = "Desktop \(number): no shortcut (\(error.message)) → "
                     + (moved ? "switched via Mission Control" : "Mission Control didn't switch either")
                 self.statusMessage = moved ? nil : error.message
             case .success(let shortcut):
+                // Hold the keyboard just until the keystroke has been delivered,
+                // then give it back, so your own typing isn't swallowed.
+                try? await Task.sleep(for: .milliseconds(150))
+                catcher.release()
                 // The switch animation takes about half a second.
-                try? await Task.sleep(for: .milliseconds(900))
+                try? await Task.sleep(for: .milliseconds(750))
                 self.refresh()
                 var moved = self.snapshot.activeSpaceID != startingSpace
                 var retried = false
@@ -788,10 +809,17 @@ final class AppModel {
                     retried = true
                     NSApp.activate()
                     try? await Task.sleep(for: .milliseconds(300))
-                    _ = SpaceSwitcher.switchTo(desktop: number)
-                    try? await Task.sleep(for: .milliseconds(900))
-                    self.refresh()
-                    moved = self.snapshot.activeSpaceID != startingSpace
+                    if catcher.hold() { // only press keys while the keyboard is held
+                        try? await Task.sleep(for: .milliseconds(60))
+                        _ = SpaceSwitcher.switchTo(desktop: number)
+                        try? await Task.sleep(for: .milliseconds(150))
+                        catcher.release()
+                        try? await Task.sleep(for: .milliseconds(750))
+                        self.refresh()
+                        moved = self.snapshot.activeSpaceID != startingSpace
+                    } else {
+                        catcher.release()
+                    }
                 }
                 // Last resort, which doesn't depend on keyboard shortcuts at all:
                 // open Mission Control and press the desktop's thumbnail.

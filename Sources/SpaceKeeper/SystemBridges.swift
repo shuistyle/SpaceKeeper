@@ -206,9 +206,18 @@ enum SpaceSwitcher {
 
     // Sends the keypress the same way a real keyboard would: modifier keys
     // down (e.g. Control), the main key down and up, then modifiers up.
+    //
+    // Two details stop the digit ever arriving on its own (which would type
+    // "3" if macOS didn't treat it as the shortcut):
+    //   • a PRIVATE event source, so the keys you're physically holding (or
+    //     have just let go of) can't mix into these events' modifier state;
+    //   • a short pause between keys, so the window server has registered
+    //     Control as held down before the digit arrives.
+    // The caller also holds the keyboard with KeystrokeCatcher, so even a
+    // keystroke macOS ignores can't reach the app you were using.
     /// Posts the full key sequence (modifier down, key down/up, modifier up).
     private static func post(_ shortcut: Shortcut) {
-        let source = CGEventSource(stateID: .hidSystemState)
+        let source = CGEventSource(stateID: .privateState)
         let modifierKeys: [(flag: CGEventFlags, key: CGKeyCode)] = [
             (.maskControl, 59), (.maskAlternate, 58), (.maskShift, 56), (.maskCommand, 55),
         ].filter { shortcut.flags.contains($0.flag) }
@@ -216,8 +225,9 @@ enum SpaceSwitcher {
         var flags: CGEventFlags = []
         func send(_ key: CGKeyCode, down: Bool) {
             let event = CGEvent(keyboardEventSource: source, virtualKey: key, keyDown: down)
-            event?.flags = flags
+            event?.flags = flags.union(.maskNonCoalesced)
             event?.post(tap: .cghidEventTap)
+            usleep(8_000) // 8 ms
         }
 
         for modifier in modifierKeys {
@@ -230,6 +240,72 @@ enum SpaceSwitcher {
             flags.remove(modifier.flag)
             send(modifier.key, down: false)
         }
+    }
+}
+
+// MARK: - Keystroke catcher
+
+// While SpaceKeeper presses a "Switch to Desktop" shortcut for you, this
+// invisible 1-pixel window holds the keyboard. Normally macOS catches the
+// shortcut and switches desktop. But if it doesn't (it's still finishing
+// the last switch, an app such as Parallels has turned the shortcuts off,
+// or macOS is ignoring them), the keystroke lands HERE and is thrown away,
+// instead of typing "3" into the web page or document you were using.
+//
+// It's a non-activating panel, like the quick panel, so holding the
+// keyboard doesn't make SpaceKeeper the active app or change the menu bar.
+// It's on every desktop, so it still holds the keyboard during the switch.
+/// Holds keyboard focus (and swallows every key) while SpaceKeeper presses a shortcut.
+final class KeystrokeCatcher {
+    static let shared = KeystrokeCatcher()
+
+    private final class CatcherPanel: NSPanel {
+        override var canBecomeKey: Bool { true }
+    }
+
+    /// Accepts the keyboard and ignores everything it receives.
+    private final class SwallowingView: NSView {
+        override var acceptsFirstResponder: Bool { true }
+        override func keyDown(with event: NSEvent) {}
+        override func keyUp(with event: NSEvent) {}
+        override func flagsChanged(with event: NSEvent) {}
+        override func performKeyEquivalent(with event: NSEvent) -> Bool { true }
+    }
+
+    private lazy var panel: CatcherPanel = {
+        let panel = CatcherPanel(contentRect: NSRect(x: 0, y: 0, width: 1, height: 1),
+                                 styleMask: [.borderless, .nonactivatingPanel],
+                                 backing: .buffered, defer: false)
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.alphaValue = 0.01 // effectively invisible, but still a real window that can hold the keyboard
+        panel.hasShadow = false
+        panel.ignoresMouseEvents = true
+        panel.hidesOnDeactivate = false
+        panel.isReleasedWhenClosed = false
+        panel.level = .floating
+        panel.collectionBehavior = [.canJoinAllSpaces, .transient, .ignoresCycle, .fullScreenAuxiliary]
+        panel.setAccessibilityElement(false)
+        panel.contentView = SwallowingView()
+        return panel
+    }()
+
+    /// Takes the keyboard. Returns true once it really has it.
+    @discardableResult
+    func hold() -> Bool {
+        let corner = NSScreen.main?.frame.origin ?? .zero
+        panel.setFrameOrigin(corner)
+        panel.orderFrontRegardless()
+        panel.makeKey()
+        panel.makeFirstResponder(panel.contentView)
+        return isHolding
+    }
+
+    var isHolding: Bool { panel.isVisible && panel.isKeyWindow }
+
+    /// Gives the keyboard back (to the front window on whichever desktop you're on now).
+    func release() {
+        panel.orderOut(nil)
     }
 }
 
