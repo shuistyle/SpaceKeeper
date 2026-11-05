@@ -215,7 +215,8 @@
       <li><a href="#accessibility">Accessibility</a></li>
       <li><a href="#install">Install</a></li>
       <li><a href="#faq">FAQ</a></li>
-      <li class="keep"><a class="repo-link" href="https://github.com/">GitHub</a></li>
+      <li><a href="#platforms">Windows &amp; ChromeOS</a></li>
+      <li class="keep"><a class="repo-link" href="https://github.com/shuistyle/SpaceKeeper">GitHub</a></li>
     </ul>
   </nav>
 </header>
@@ -230,9 +231,10 @@
         <p class="lede">SpaceKeeper is a small menu bar app that gives your Mission Control desktops real names, stops macOS from shuffling them, and lets you jump, pin, reorder, add and remove them from one panel.</p>
         <div class="cta">
           <a class="btn btn-primary" href="#install">Get SpaceKeeper</a>
-          <a class="btn btn-secondary repo-link" href="https://github.com/">View the code on GitHub</a>
+          <a class="btn btn-secondary repo-link" href="https://github.com/shuistyle/SpaceKeeper">View the code on GitHub</a>
         </div>
-        <p class="fineprint">Works on a standard Mac. No need to switch off System Integrity Protection.</p>
+        <p class="fineprint">Works on a standard Mac. No need to switch off System Integrity Protection.<br>
+          Also for <a href="https://shuistyle.github.io/SpaceKeeper-Windows/">Windows 11</a> and <a href="https://github.com/shuistyle/SpaceKeeper-ChromeOS">ChromeOS</a>.</p>
       </div>
 
       <figure class="mock" aria-labelledby="mock-caption" style="margin:0">
@@ -315,7 +317,17 @@
         <li class="card">
           <div class="icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M7 10h2m3 0h2m3 0h0M8 14h8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></div>
           <h3>Open from anywhere</h3>
-          <p>Press <kbd>⌃⌥S</kbd> in any app to bring up SpaceKeeper, rename or jump, then press <kbd>Esc</kbd> to close it.</p>
+          <p>Double-tap <kbd>control</kbd> in any app (or press <kbd>⌃⌥S</kbd>) to bring up SpaceKeeper, rename or jump, then press <kbd>Esc</kbd> to close it.</p>
+        </li>
+        <li class="card">
+          <div class="icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="8" height="8" rx="2" fill="currentColor"/><circle cx="17" cy="7" r="4" fill="none" stroke="currentColor" stroke-width="2"/><path d="M7 13l4 8H3z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M17 13l4 4-4 4-4-4z" fill="currentColor"/></svg></div>
+          <h3>Colour-code them</h3>
+          <p>Right-click a desktop to fill its tile with one of ten colours chosen for colour blindness. Each has its own symbol and keeps text at 7:1 contrast, so colour is never the only clue.</p>
+        </li>
+        <li class="card">
+          <div class="icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></div>
+          <h3>Full-screen apps too</h3>
+          <p>Apps in full screen, such as a virtual machine, get their own tile. Click it to go straight there, however many desktops you have.</p>
         </li>
         <li class="card">
           <div class="icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="7" r="2.4" fill="currentColor"/><path d="M5 10l7 1.5L19 10M12 11.5V16m0 0l-3.5 5M12 16l3.5 5" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/></svg></div>
@@ -362,7 +374,7 @@
       <p class="section-lede">SpaceKeeper follows Apple's accessibility guidelines, so it works the way you work.</p>
       <ul class="grid">
         <li class="card"><h3>VoiceOver</h3><p>Every control says what it does and which desktop it acts on, for example “Pin Mail”. Desktop switches, warnings and changes are announced.</p></li>
-        <li class="card"><h3>Keyboard only</h3><p>Tab through everything. <kbd>⌃⌥S</kbd> opens the panel, <kbd>⌘N</kbd> adds a desktop, and <kbd>⌥⌘↑</kbd>/<kbd>⌥⌘↓</kbd> reorder the list.</p></li>
+        <li class="card"><h3>Keyboard only</h3><p>Tab through everything. Double-tap <kbd>control</kbd> (or <kbd>⌃⌥S</kbd>) opens the panel, <kbd>⌘N</kbd> adds a desktop, and <kbd>⌥⌘↑</kbd>/<kbd>⌥⌘↓</kbd> reorder the list.</p></li>
         <li class="card"><h3>Vision</h3><p>Large and extra-large label sizes, solid high-contrast styling when you ask for it, and nothing shown by colour alone.</p></li>
         <li class="card"><h3>Motion</h3><p>With Reduce Motion on, nothing slides or fades, and banners stay up a little longer.</p></li>
       </ul>
@@ -413,8 +425,28 @@ bash build.sh --install</code></pre>
     </div>
   </section>
 
+  <!-- Other platforms -->
+  <section class="alt" id="platforms" aria-labelledby="platforms-title">
+    <div class="wrap">
+      <h2 id="platforms-title">Also for Windows and ChromeOS</h2>
+      <p class="section-lede">The same idea, built for each system: name your desktops, colour-code them and jump between them from one panel.</p>
+      <ul class="grid">
+        <li class="card">
+          <h3>SpaceKeeper for Windows 11</h3>
+          <p>Names Windows' virtual desktops for real (they show in Task View too), pins their order and opens with a double tap of Ctrl. Installs with one copy-and-paste command.</p>
+          <p style="margin-top:14px"><a class="btn btn-secondary" href="https://shuistyle.github.io/SpaceKeeper-Windows/">SpaceKeeper for Windows</a></p>
+        </li>
+        <li class="card">
+          <h3>SpaceKeeper for ChromeOS</h3>
+          <p>An installable web app for school and work Chromebooks, once an administrator switches on Google's Desk API. Anywhere else it opens in a demo mode.</p>
+          <p style="margin-top:14px"><a class="btn btn-secondary" href="https://github.com/shuistyle/SpaceKeeper-ChromeOS">SpaceKeeper for ChromeOS</a></p>
+        </li>
+      </ul>
+    </div>
+  </section>
+
   <!-- FAQ -->
-  <section class="alt" id="faq" aria-labelledby="faq-title">
+  <section id="faq" aria-labelledby="faq-title">
     <div class="wrap">
       <h2 id="faq-title">Questions</h2>
       <details>
@@ -444,7 +476,7 @@ bash build.sh --install</code></pre>
 <footer>
   <div class="wrap">
     <span>© 2026 Andrew Flowerdew · SpaceKeeper</span>
-    <span><a class="repo-link" href="https://github.com/">Source code</a> · <a class="repo-issues" href="https://github.com/">Report a problem</a></span>
+    <span><a class="repo-link" href="https://github.com/shuistyle/SpaceKeeper">Source code</a> · <a class="repo-issues" href="https://github.com/shuistyle/SpaceKeeper/issues">Report a problem</a></span>
   </div>
 </footer>
 
