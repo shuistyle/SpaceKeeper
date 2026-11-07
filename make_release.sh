@@ -102,7 +102,11 @@ hdiutil attach -quiet -readonly -nobrowse -mountpoint "$MOUNT" "$DMG"
 for item in "SpaceKeeper.app" "Applications" "First time opening SpaceKeeper.pdf"; do
   [[ -e "$MOUNT/$item" ]] || { echo "✗ The DMG is missing “${item}”."; exit 1; }
 done
-codesign --verify --strict "$MOUNT/SpaceKeeper.app"
+if ! codesign --verify --strict --deep "$MOUNT/SpaceKeeper.app"; then
+  echo "  Extra file information found in the app (for diagnosis):"
+  xattr -lr "$MOUNT/SpaceKeeper.app" | sed 's/^/    /' | head -20
+  exit 1
+fi
 SHOWN="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$MOUNT/SpaceKeeper.app/Contents/Info.plist")"
 [[ "$SHOWN" == "$VERSION" ]] || { echo "✗ The app inside says version ${SHOWN}, not ${VERSION}."; exit 1; }
 echo "  OK: app signed and complete, version ${SHOWN}, runs on $(lipo -archs "$MOUNT/SpaceKeeper.app/Contents/MacOS/SpaceKeeper")."

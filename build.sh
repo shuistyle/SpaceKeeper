@@ -178,6 +178,10 @@ if [[ -n "${APP_VERSION:-}" ]]; then
   /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $(git rev-list --count HEAD 2>/dev/null || echo 1)" "$APP/Contents/Info.plist"
 fi
 
+# Remove any extended attributes (Finder info, quarantine and the like):
+# signing requires a clean bundle, and strict checks reject them later.
+xattr -cr "$APP"
+
 prepare_signing
 echo "▸ Signing with ${IDENTITY}…"
 codesign --force --options runtime --timestamp=none ${KEYCHAIN_ARGS[@]+"${KEYCHAIN_ARGS[@]}"} --sign "$IDENTITY" "$APP"

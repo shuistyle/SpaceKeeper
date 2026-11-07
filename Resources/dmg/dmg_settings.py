@@ -29,7 +29,8 @@ size = None                # work it out from the contents
 
 files = [app, guide]
 symlinks = {"Applications": "/Applications"}
-hide_extensions = [app_name]
+# (No hide_extensions: hiding ".app" adds Finder information to the app,
+# which breaks strict signature checks. Finder hides ".app" by default anyway.)
 
 icon = os.path.join(here, "..", "AppIcon.icns")   # the disk's own icon
 background = os.path.join(here, "background.png")  # background@2x.png is used on Retina screens
