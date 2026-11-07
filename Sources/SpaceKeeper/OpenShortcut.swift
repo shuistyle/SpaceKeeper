@@ -63,7 +63,7 @@ final class QuickPanelController {
         // panel sits centred at its top; the transparent rest lets clicks through.
         let screen = Self.statusButton()?.window?.screen ?? NSScreen.main ?? NSScreen.screens.first
         if let visible = screen?.visibleFrame {
-            let height = min(visible.height - 12, 1100)
+            let height = PanelMetrics.windowHeight(forScreenHeight: visible.height)
             panel.setFrame(NSRect(x: visible.minX, y: visible.maxY - height - 6,
                                   width: visible.width, height: height), display: true)
         }
@@ -105,10 +105,9 @@ final class QuickPanelController {
     /// Starting width; show() resizes the window to the screen's width.
     private static let panelWidth: CGFloat = 900
 
-    private func panelHeight() -> CGFloat {
-        let visible = (NSScreen.main ?? NSScreen.screens.first)?.visibleFrame.height ?? 900
-        return min(visible - 20, 900)
-    }
+    /// Same height the panel's content is capped to (PanelMetrics), so the
+    /// content scrolls instead of running off the bottom of the window.
+    private func panelHeight() -> CGFloat { PanelMetrics.windowHeight }
 
     private func makePanel() -> KeyablePanel {
         let height = panelHeight()

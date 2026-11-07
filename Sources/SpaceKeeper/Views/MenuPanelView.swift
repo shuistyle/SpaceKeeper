@@ -28,6 +28,7 @@
 // ======================================================================
 
 import AppKit
+import Observation
 import SwiftUI
 
 // Accessibility notes
@@ -60,6 +61,19 @@ nonisolated extension EnvironmentValues {
     var panelScale: CGFloat {
         get { self[PanelScaleKey.self] }
         set { self[PanelScaleKey.self] = newValue }
+    }
+}
+
+/// Lets a part of the panel ask to be scrolled into view (e.g. Settings
+/// when you open it). FittedScroll provides one and does the scrolling;
+/// views read it with `@Environment(PanelScroller.self)`.
+@Observable
+final class PanelScroller {
+    /// The id to scroll to, plus a counter so asking twice still scrolls.
+    private(set) var request: (id: String, count: Int)?
+
+    func scroll(to id: String) {
+        request = (id, (request?.count ?? 0) + 1)
     }
 }
 
@@ -131,24 +145,46 @@ extension Color {
 
 /// A scroll area that is exactly as tall as its content, up to `maxHeight`.
 /// (A plain ScrollView in a menu bar panel collapses to zero height.)
+/// When the content is taller than that, the scroll bar stays visible so
+/// it's obvious there's more below. Views inside can scroll themselves into
+/// view through `PanelScroller`.
 private struct FittedScroll<Content: View>: View {
     let maxHeight: CGFloat
     @ViewBuilder let content: Content
     @State private var contentHeight: CGFloat = 0
 
+    @State private var scroller = PanelScroller()
+
     var body: some View {
-        ScrollView {
-            content
-                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { contentHeight = $0 }
+        ScrollViewReader { proxy in
+            ScrollView {
+                content
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { contentHeight = $0 }
+                    .environment(scroller)
+            }
+            .frame(height: min(max(contentHeight, 1), maxHeight))
+            .scrollIndicators(contentHeight > maxHeight ? .visible : .automatic)
+            .onChange(of: scroller.request?.count) {
+                guard let id = scroller.request?.id else { return }
+                withAnimation(NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? nil : .snappy) {
+                    proxy.scrollTo(id, anchor: .top)
+                }
+            }
         }
-        .frame(height: min(max(contentHeight, 1), maxHeight))
-        .scrollIndicators(.automatic)
     }
 }
 
 /// Usable screen height, for capping scroll areas so the panel fits on screen.
 private var screenHeight: CGFloat {
     (NSScreen.main ?? NSScreen.screens.first)?.visibleFrame.height ?? 900
+}
+
+/// The tallest the panel can be: its window's height (QuickPanelController),
+/// less room for the panel's shadow. Anything taller scrolls.
+enum PanelMetrics {
+    static func windowHeight(forScreenHeight height: CGFloat) -> CGFloat { min(height - 12, 1100) }
+    static var windowHeight: CGFloat { windowHeight(forScreenHeight: screenHeight) }
+    static var maxContentHeight: CGFloat { windowHeight - 16 }
 }
 
 
@@ -177,6 +213,29 @@ struct MenuPanelView: View {
     }
 
     var body: some View {
+        // At larger text sizes the panel can be taller than the screen; then
+        // it scrolls, so Settings, Diagnostics and Quit are always reachable.
+        FittedScroll(maxHeight: PanelMetrics.maxContentHeight) {
+            panelContent
+        }
+        // As wide as the desktop grid (2 rows of 8, or 4 columns at large sizes).
+        .frame(width: GridMetrics.panelWidth(scale, columns: GridMetrics.columns(scale)))
+        // Everything inside reads this to size its text and icons.
+        .environment(\.panelScale, scale)
+        // Base font for buttons, switches and text fields.
+        .font(.system(size: SKTextStyle.body.baseSize * scale))
+        .skControlSize()
+        .background { textSizeShortcuts }
+        .onAppear { model.panelDidAppear() }
+        .onChange(of: model.panelTextSize) { _, size in
+            A11y.announce("Text size: \(size.title)")
+        }
+        .onChange(of: model.statusMessage) { _, message in
+            if let message { A11y.announce(message) }
+        }
+    }
+
+    private var panelContent: some View {
         VStack(alignment: .leading, spacing: 12) {
             CurrentSpaceHeader()
 
@@ -211,21 +270,6 @@ struct MenuPanelView: View {
             FooterView()
         }
         .padding(GridMetrics.padding(scale))
-        // As wide as the desktop grid (2 rows of 8, or 4 columns at large sizes).
-        .frame(width: GridMetrics.panelWidth(scale, columns: GridMetrics.columns(scale)))
-        // Everything inside reads this to size its text and icons.
-        .environment(\.panelScale, scale)
-        // Base font for buttons, switches and text fields.
-        .font(.system(size: SKTextStyle.body.baseSize * scale))
-        .skControlSize()
-        .background { textSizeShortcuts }
-        .onAppear { model.panelDidAppear() }
-        .onChange(of: model.panelTextSize) { _, size in
-            A11y.announce("Text size: \(size.title)")
-        }
-        .onChange(of: model.statusMessage) { _, message in
-            if let message { A11y.announce(message) }
-        }
     }
 }
 
@@ -947,6 +991,7 @@ private struct SettingsSection: View {
     // Collapsed by default, so the panel opens showing just your desktops.
     // Click "Settings" to show the options; click it again to hide them.
     @State private var isExpanded = false
+    @Environment(PanelScroller.self) private var scroller: PanelScroller?
 
     var body: some View {
         @Bindable var model = model
@@ -954,6 +999,13 @@ private struct SettingsSection: View {
             // The "Settings" heading is a button that shows/hides everything below it.
             Button {
                 withAnimation(reduceMotion ? nil : .snappy) { isExpanded.toggle() }
+                // Bring the settings into view (they may be below the bottom of the screen).
+                if isExpanded {
+                    Task { @MainActor in
+                        try? await Task.sleep(for: .milliseconds(reduceMotion ? 50 : 250))
+                        scroller?.scroll(to: "settings")
+                    }
+                }
             } label: {
                 HStack(spacing: 6) {
                     Text("Settings")
@@ -976,8 +1028,8 @@ private struct SettingsSection: View {
             .accessibilityAddTraits(.isHeader)
 
             if isExpanded {
-                // Scrolls if the settings don't fit on screen (e.g. at the largest text size).
-                FittedScroll(maxHeight: screenHeight * 0.4) {
+                // (The whole panel scrolls if this doesn't fit on screen.)
+                Group {
                     // Two columns of settings when the panel is wide, one otherwise.
                     LazyVGrid(
                         columns: Array(repeating: GridItem(.flexible(), spacing: 32 * scale, alignment: .leading),
@@ -1053,6 +1105,7 @@ private struct SettingsSection: View {
         }
         .toggleStyle(.switch)
         .skControlSize()
+        .id("settings")
     }
 }
 
@@ -1132,6 +1185,7 @@ private struct FooterView: View {
 // useful when something isn't working.
 private struct DiagnosticsView: View {
     @Environment(AppModel.self) private var model
+    @Environment(PanelScroller.self) private var scroller: PanelScroller?
     @State private var isExpanded = false
 
     var body: some View {
@@ -1172,6 +1226,15 @@ private struct DiagnosticsView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .skFont(.callout)
+        .id("diagnostics")
+        // Bring the report into view when it opens (it may be below the bottom of the screen).
+        .onChange(of: isExpanded) { _, expanded in
+            guard expanded else { return }
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(250))
+                scroller?.scroll(to: "diagnostics")
+            }
+        }
     }
 }
 
