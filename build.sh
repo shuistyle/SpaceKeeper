@@ -134,13 +134,29 @@ prepare_signing() {
 echo "▸ Building (release)…"
 if [[ "${UNIVERSAL:-0}" == 1 ]]; then
   # Build for each kind of Mac processor, then join the two into one program.
-  swift build -c release --arch arm64
-  swift build -c release --arch x86_64
-  ARM_BIN="$(swift build -c release --arch arm64 --show-bin-path)/$APP_NAME"
-  INTEL_BIN="$(swift build -c release --arch x86_64 --show-bin-path)/$APP_NAME"
-  BINARY="build/${APP_NAME}-universal"
+  # Each build gets its OWN folder (--scratch-path) and its result is copied
+  # out straight away: with Xcode's newer build system both builds otherwise
+  # land in the same place, and the second overwrites the first.
   mkdir -p build
-  lipo -create "$ARM_BIN" "$INTEL_BIN" -output "$BINARY"
+  build_arch() { # $1 = arm64 or x86_64; copies the result to build/SpaceKeeper-$1
+    local scratch=".build/arch-$1"
+    swift build -c release --arch "$1" --scratch-path "$scratch" || return 1
+    local bin; bin="$(swift build -c release --arch "$1" --scratch-path "$scratch" --show-bin-path)/$APP_NAME"
+    [[ "$(lipo -archs "$bin" 2>/dev/null)" == "$1" ]] || { echo "  (the $1 build produced the wrong kind of program)"; return 1; }
+    cp "$bin" "build/${APP_NAME}-$1"
+  }
+  echo "  For Apple silicon…"
+  build_arch arm64 || { echo "✗ The Apple silicon build failed (see the messages above)."; exit 1; }
+  echo "  For Intel…"
+  BINARY="build/${APP_NAME}-universal"
+  if build_arch x86_64; then
+    lipo -create "build/${APP_NAME}-arm64" "build/${APP_NAME}-x86_64" -output "$BINARY"
+  else
+    # Intel Macs can't run macOS 27, and Apple is phasing out Intel builds,
+    # so carry on with an Apple silicon-only app rather than stopping.
+    echo "  ⚠︎ The Intel build failed, so this app will run on Apple silicon Macs only."
+    cp "build/${APP_NAME}-arm64" "$BINARY"
+  fi
   echo "  Runs on: $(lipo -archs "$BINARY")"
 else
   swift build -c release

@@ -25,6 +25,22 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
+# When the script ends: close the test-opened DMG if it's still open, and if
+# any step failed, say so clearly (rather than just stopping).
+MOUNT=""
+on_exit() {
+  local status=$?
+  if [[ -n "$MOUNT" ]]; then
+    hdiutil detach -quiet "$MOUNT" 2>/dev/null || hdiutil detach -quiet -force "$MOUNT" 2>/dev/null || true
+    rmdir "$MOUNT" 2>/dev/null || true
+  fi
+  if [[ $status -ne 0 ]]; then
+    echo ""
+    echo "✗ Stopped: the step above failed, so nothing was published. Send the messages above for help."
+  fi
+}
+trap on_exit EXIT
+
 VERSION="${1:-}"
 VERSION="${VERSION#v}"
 if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
@@ -83,8 +99,6 @@ echo "▸ Checking the DMG…"
 hdiutil verify -quiet "$DMG"
 MOUNT="$(mktemp -d)"
 hdiutil attach -quiet -readonly -nobrowse -mountpoint "$MOUNT" "$DMG"
-detach() { hdiutil detach -quiet "$MOUNT" 2>/dev/null || hdiutil detach -quiet -force "$MOUNT" 2>/dev/null || true; rmdir "$MOUNT" 2>/dev/null || true; }
-trap detach EXIT
 for item in "SpaceKeeper.app" "Applications" "First time opening SpaceKeeper.pdf"; do
   [[ -e "$MOUNT/$item" ]] || { echo "✗ The DMG is missing “${item}”."; exit 1; }
 done
@@ -92,10 +106,16 @@ codesign --verify --strict "$MOUNT/SpaceKeeper.app"
 SHOWN="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$MOUNT/SpaceKeeper.app/Contents/Info.plist")"
 [[ "$SHOWN" == "$VERSION" ]] || { echo "✗ The app inside says version ${SHOWN}, not ${VERSION}."; exit 1; }
 echo "  OK: app signed and complete, version ${SHOWN}, runs on $(lipo -archs "$MOUNT/SpaceKeeper.app/Contents/MacOS/SpaceKeeper")."
-detach; trap - EXIT
+hdiutil detach -quiet "$MOUNT" 2>/dev/null || hdiutil detach -quiet -force "$MOUNT"
+rmdir "$MOUNT" 2>/dev/null || true
+MOUNT=""
 
 # ---------------------------------------------------------------- 5. checksum and notes
 ( cd "$OUT" && shasum -a 256 "SpaceKeeper-${VERSION}.dmg" > SHA256SUMS.txt )
+case "$(lipo -archs "$APP/Contents/MacOS/SpaceKeeper")" in
+  *x86_64*arm64*|*arm64*x86_64*) RUNS_ON="Works on Apple silicon and Intel Macs." ;;
+  *) RUNS_ON="Works on Mac computers with Apple silicon." ;;
+esac
 SUM="$(cut -d' ' -f1 "$OUT/SHA256SUMS.txt")"
 cat > "$OUT/notes.md" <<NOTES
 ## Install
@@ -104,7 +124,7 @@ cat > "$OUT/notes.md" <<NOTES
 2. Drag the **SpaceKeeper** icon onto the **Applications** folder.
 3. The first time you open it, macOS asks you to confirm. Double-click **First time opening SpaceKeeper** in the same window for the step-by-step guide (about a minute, once only).
 
-Needs macOS 26 or later. Works on Apple silicon and Intel Macs.
+Needs macOS 26 or later. ${RUNS_ON}
 
 **Already have SpaceKeeper?** Quit it from its menu bar panel, then drag the new version onto Applications and choose **Replace**. Your names, colours and pins are kept.
 
